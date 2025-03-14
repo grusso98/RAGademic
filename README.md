@@ -24,7 +24,7 @@ cd ragademic
 python3 -m venv ragademic
 pip install -r requirements.txt
 ```
-Also create .env file and add your openai key as OPENAI_API_KEY=<your key>
+Also create .env file and add your openai key as ```OPENAI_API_KEY=<your_key>```
 ### 3. Run the app
 ```bash
 python3 app.py --openai
