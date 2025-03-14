@@ -1,0 +1,5 @@
+/ragademic
+.env
+/__pycache__
+/chroma_db
+/knowledge_base
