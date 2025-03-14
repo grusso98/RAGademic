@@ -11,11 +11,16 @@ client = chromadb.PersistentClient(path="./chroma_db")
 collection_name = "university_notes"
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_embedder = embedding_functions.OpenAIEmbeddingFunction(api_key=openai_api_key)
+openai_embedder = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=openai_api_key)
 
-collection = client.get_or_create_collection(name=collection_name, embedding_function=openai_embedder)
+collection = client.get_or_create_collection(
+    name=collection_name, embedding_function=openai_embedder)
 
-def add_document(doc_id: str, content: str, metadata: Optional[Dict] = None) -> str:
+
+def add_document(doc_id: str,
+                 content: str,
+                 metadata: Optional[Dict] = None) -> str:
     """
     Adds a document to the vector database if it doesn't already exist.
 
@@ -26,7 +31,8 @@ def add_document(doc_id: str, content: str, metadata: Optional[Dict] = None) -> 
     Args:
         doc_id (str): A unique identifier for the document.
         content (str): The content of the document to be embedded and added.
-        metadata (Optional[Dict], optional): Metadata related to the document (e.g., categories, authors). Defaults to None.
+        metadata (Optional[Dict], optional): Metadata related to the document (
+        e.g., categories, authors). Defaults to None.
 
     Returns:
         str: A message indicating the success or reason for skipping the document.
@@ -39,7 +45,7 @@ def add_document(doc_id: str, content: str, metadata: Optional[Dict] = None) -> 
     if not collection.get(ids=[doc_id]):
         collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
         return f"Document {doc_id} added successfully."
-    
+
     glog.info("Document already in database")
     return f"Document {doc_id} already exists in the collection. Skipping embedding."
 
@@ -82,5 +88,8 @@ def list_documents() -> Dict:
     """
     return collection.get(include=["documents", "embeddings", "metadatas"])
 
+
 if __name__ == "__main__":
-    print("VectorDB module loaded. Run functions directly to manipulate the database.")
+    glog.info(
+        "VectorDB module loaded. Run functions directly to manipulate the database."
+    )
