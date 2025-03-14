@@ -25,7 +25,11 @@ python3 -m venv ragademic
 pip install -r requirements.txt
 ```
 Also create .env file and add your openai key as ```OPENAI_API_KEY=<your_key>```
-### 3. Run the app
+
+### 3. Load your PDF
+Load pdfs under ```knowledge_base/category/```
+
+### 4. Run the app
 ```bash
 python3 app.py --openai
 ```
