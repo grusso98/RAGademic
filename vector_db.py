@@ -80,7 +80,7 @@ def list_documents() -> Dict:
     Returns:
         Dict: A dictionary containing all document IDs stored in the collection.
     """
-    return collection.peek()
+    return collection.get(include=["documents", "embeddings", "metadatas"])
 
 if __name__ == "__main__":
     print("VectorDB module loaded. Run functions directly to manipulate the database.")
