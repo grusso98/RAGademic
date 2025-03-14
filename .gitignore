@@ -2,4 +2,5 @@
 .env
 /__pycache__
 /chroma_db
-/knowledge_base
+/knowledge_base/*
+todo
