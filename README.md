@@ -4,7 +4,7 @@ This project provides a **Retrieval-Augmented Generation (RAG)** system to query
 
 ## Features
 - **Chat with your notes**: Ask questions, and the system retrieves relevant information using embeddings.
-- **Database management**: Upload, delete, and visualize document embeddings. [TODO]
+- **Database management**: Upload, delete, and visualize document embeddings.
 - **Two LLM options**: Use either OpenAI's API or a local **LLaMA** model via an OpenAI-compatible API. [TODO]
 
 ---
