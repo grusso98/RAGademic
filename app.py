@@ -3,7 +3,6 @@ import random
 import gradio as gr
 import glob
 import numpy as np
-import argparse
 from sklearn.manifold import TSNE
 from dotenv import load_dotenv
 from vector_db import (add_document, query_documents, delete_document,
@@ -13,28 +12,6 @@ from openai import OpenAI
 from typing import List, Optional
 import glog
 import plotly.graph_objs as go
-
-# Parse command-line arguments
-parser = argparse.ArgumentParser(
-    description="Run the RAG-based university notes query system.")
-parser.add_argument("--openai",
-                    action="store_true",
-                    help="Use OpenAI API for LLM and embeddings",
-                    required=True)
-args = parser.parse_args()
-
-# Load OpenAI API key
-load_dotenv()
-openai = OpenAI()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "")
-if OPENAI_API_BASE:
-    openai.api_base = OPENAI_API_BASE
-
-model_name = "gpt-4o-mini"
-
-# Knowledge base folder
-KB_FOLDER = "knowledge_base"
 
 
 def chunk_text(text: str,
@@ -94,7 +71,9 @@ def load_notes() -> None:
                         add_document(chunk_id, chunk, {"category": category})
 
 
-def query_rag(query: str, history: Optional[List[str]] = None) -> str:
+def query_rag(query: str,
+              model: str,
+              history: Optional[List[str]] = None) -> str:
     """
     Handles querying the vector DB and generating a streaming response.
 
@@ -114,11 +93,16 @@ def query_rag(query: str, history: Optional[List[str]] = None) -> str:
         " ".join(doc) if isinstance(doc, list) else doc
         for doc in results.get("documents", [])
     ])
-    prompt = f'"You are a helpful university tutor. Answer the question based on'
-    'the provided notes. Also state the sources. \n\nContext:\n{context}'
-    '\n\nQuestion: {query}\nAnswer:"'
-
-    response = openai.chat.completions.create(model=model_name,
+    prompt = f"You are a helpful university tutor. Answer the question based on the provided notes. Also state the sources. \n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+    if model == "llama3.2":
+        openai = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+    elif model == "gpt-4o-mini":
+        openai = OpenAI()
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "")
+        if OPENAI_API_BASE:
+            openai.api_base = OPENAI_API_BASE
+    response = openai.chat.completions.create(model=model,
                                               messages=[{
                                                   "role":
                                                   "system",
@@ -251,11 +235,22 @@ def delete_document_interface(doc_id: str) -> str:
     return f"Document {doc_id} deleted successfully."
 
 
+# Load OpenAI API key
+load_dotenv()
+
+# Knowledge base folder
+KB_FOLDER = "knowledge_base"
+
 # Load notes at startup
 load_notes()
 
 tab1 = gr.Interface(fn=query_rag,
-                    inputs="text",
+                    inputs=[
+                        gr.Textbox(label="Enter your query"),
+                        gr.Radio(choices=["gpt-4o-mini", "llama3.2"],
+                                 value="gpt-4o-mini",
+                                 label="Choose Model")
+                    ],
                     outputs="text",
                     title="Query your University Notes")
 tab2 = gr.TabbedInterface(
