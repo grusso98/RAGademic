@@ -31,10 +31,19 @@ OPENAI_API_KEY=<your_key>
 EMBEDDER_TYPE=huggingface
 HF_TOKEN=<your_token> 
 ```
-Note: the huggingface embedding is obtained through API but it could be done locally too.
+Notes: 
+- the openai api key is needed if you use gpt for chatting and/or openai embeddings
+- embedder_type can either be **huggingface** or **openai**
+- the huggingface embedding is obtained through API but it could be done locally too.
 
 ### 3. Load your PDF
-Load pdfs under ```knowledge_base/category/```
+Load PDFs 
+```bash
+./knowledge_base
+    /category_1/*.pdf
+    ...
+    /category_n/*.pdf
+```
 
 ### 4. Run the app
 ```bash
