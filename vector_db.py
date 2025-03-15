@@ -41,8 +41,8 @@ def add_document(doc_id: str,
     if metadata is None:
         metadata = {}
 
-    # Check if the document already exists in the collection by doc_id
-    if not collection.get(ids=[doc_id]):
+    existing_docs = collection.get(ids=[doc_id])
+    if not existing_docs["ids"]:
         collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
         return f"Document {doc_id} added successfully."
 
