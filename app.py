@@ -3,7 +3,6 @@ import random
 import gradio as gr
 import glob
 import numpy as np
-import argparse
 from sklearn.manifold import TSNE
 from dotenv import load_dotenv
 from vector_db import (add_document, query_documents, delete_document,
