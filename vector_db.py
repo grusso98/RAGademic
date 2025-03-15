@@ -4,18 +4,34 @@ import os
 from dotenv import load_dotenv
 import glog
 from typing import Optional, Dict
+import chromadb.utils.embedding_functions as embedding_functions
 
 load_dotenv()
 
-client = chromadb.PersistentClient(path="./chroma_db")
+# Load configuration
+EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "openai")  # Default to OpenAI
+VECTOR_DB_PATH = "./chroma_db"
 collection_name = "university_notes"
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_embedder = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=openai_api_key)
+# Initialize ChromaDB client
+client = chromadb.PersistentClient(path=VECTOR_DB_PATH)
 
-collection = client.get_or_create_collection(
-    name=collection_name, embedding_function=openai_embedder)
+# Choose embedder based on config
+if EMBEDDER_TYPE == "openai":
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    embedder = embedding_functions.OpenAIEmbeddingFunction(
+        api_key=openai_api_key)
+elif EMBEDDER_TYPE == "huggingface":
+    embedder = embedding_functions.HuggingFaceEmbeddingFunction(
+        api_key=os.getenv("HF_TOKEN"),
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+    )
+else:
+    raise ValueError(f"Unsupported embedder type: {EMBEDDER_TYPE}")
+
+# Initialize collection
+collection = client.get_or_create_collection(name=collection_name,
+                                             embedding_function=embedder)
 
 
 def add_document(doc_id: str,
