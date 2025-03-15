@@ -32,6 +32,7 @@ EMBEDDER_TYPE=huggingface
 HF_TOKEN=<your_token> 
 ```
 Notes: 
+- you can use llama3.2 installing it locally with ollama
 - the openai api key is needed if you use gpt for chatting and/or openai embeddings
 - embedder_type can either be **huggingface** or **openai**
 - the huggingface embedding is obtained through API but it could be done locally too.
