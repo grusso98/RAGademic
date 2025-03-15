@@ -40,3 +40,7 @@ Load pdfs under ```knowledge_base/category/```
 ```bash
 python3 app.py
 ```
+#### Chat Interface
+![Chat Interface](./imgs/chat.png)
+#### DB Management Interface
+![DB management Interface](./imgs/db_management.png)
