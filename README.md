@@ -5,7 +5,8 @@ This project provides a **Retrieval-Augmented Generation (RAG)** system to query
 ## Features
 - **Chat with your notes**: Ask questions, and the system retrieves relevant information using embeddings.
 - **Database management**: Upload, delete, and visualize document embeddings.
-- **Two LLM options**: Use either OpenAI's API or a local **LLaMA** model via an OpenAI-compatible API. [TODO]
+- **Two LLM options**: Use either OpenAI's API or a local **LLaMA** model via an OpenAI-compatible API.
+- **Two Embedding options**: Use either OpenAI's embedder or a HF embedder from the hub.
 
 ---
 
@@ -24,12 +25,18 @@ cd ragademic
 python3 -m venv ragademic
 pip install -r requirements.txt
 ```
-Also create .env file and add your openai key as ```OPENAI_API_KEY=<your_key>```
+Also create .env file and add:
+```bash
+OPENAI_API_KEY=<your_key>
+EMBEDDER_TYPE=huggingface
+HF_TOKEN=<your_token> 
+```
+Note: the huggingface embedding is obtained through API but it could be done locally too.
 
 ### 3. Load your PDF
 Load pdfs under ```knowledge_base/category/```
 
 ### 4. Run the app
 ```bash
-python3 app.py --openai
+python3 app.py
 ```
