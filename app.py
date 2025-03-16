@@ -23,9 +23,9 @@ def chunk_text(text: str,
 
     Args:
         text (str): The text to be split into chunks.
-        chunk_size (int, optional): The maximum size of each chunk. 
+        chunk_size (int, optional): The maximum size of each chunk.
             Defaults to 1000.
-        overlap (int, optional): The number of overlapping characters between 
+        overlap (int, optional): The number of overlapping characters between
             consecutive chunks. Defaults to 200.
 
     Returns:
@@ -46,8 +46,8 @@ def load_notes() -> None:
     """
     Loads notes from the knowledge base folder and adds them to the vector DB.
 
-    This function iterates through all categories and files in the knowledge 
-    base folder, extracts the text from PDF documents, chunks the content, 
+    This function iterates through all categories and files in the knowledge
+    base folder, extracts the text from PDF documents, chunks the content,
     and adds it to the vector database.
 
     Returns:
@@ -168,7 +168,7 @@ def query_rag(
 
 def visualize_embeddings_interactive() -> go.Figure:
     """
-    Visualizes document embeddings interactively using Plotly and colors 
+    Visualizes document embeddings interactively using Plotly and colors
     them based on their categories.
 
     Returns:
@@ -282,6 +282,34 @@ def delete_document_interface(doc_id: str) -> str:
     return f"Document {doc_id} deleted successfully."
 
 
+def chatbot(query, model, history):
+    """
+    Handles the chatbot interaction by maintaining conversation history.
+
+    Args:
+        query (str): The user's query.
+        model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
+        history (List[Tuple[str, str]]): The conversation history.
+
+    Returns:
+        List[Tuple[str, str]]: The updated conversation history.
+    """
+    # Append the user message to the history if it's not empty
+    if query.strip():
+        history.append((query, ""))
+
+    # Generate the assistant's response
+    response_text = list(
+        query_rag(query, model, [msg[0] for msg in history if msg[1] == ""]))
+    response = response_text[-1] if response_text else ""
+
+    # Append the assistant's response to the history if it's not empty
+    if response.strip():
+        history.append(("", response))
+
+    return history
+
+
 # Load OpenAI API key
 load_dotenv()
 
@@ -291,15 +319,21 @@ KB_FOLDER = "knowledge_base"
 # Load notes at startup
 load_notes()
 
-tab1 = gr.Interface(fn=query_rag,
-                    inputs=[
-                        gr.Textbox(label="Enter your query"),
-                        gr.Radio(choices=["gpt-4o-mini", "llama3.2"],
-                                 value="gpt-4o-mini",
-                                 label="Choose Model")
-                    ],
-                    outputs=gr.Markdown(),
-                    title="Query your University Notes")
+# Gradio interface for chat-like interaction
+with gr.Blocks() as chat_interface:
+    chatbot_interface = gr.Chatbot()
+    model_selector = gr.Radio(choices=["gpt-4o-mini", "llama3.2"],
+                              value="gpt-4o-mini",
+                              label="Choose Model")
+    user_input = gr.Textbox(label="Enter your query")
+
+    def respond(query, model, history):
+        updated_history = chatbot(query, model, history)
+        return gr.update(value=""), updated_history
+
+    user_input.submit(respond, [user_input, model_selector, chatbot_interface],
+                      [user_input, chatbot_interface])
+
 tab2 = gr.TabbedInterface(
     [
         gr.Interface(fn=visualize_embeddings_interactive,
@@ -317,7 +351,7 @@ tab2 = gr.TabbedInterface(
     ],
     tab_names=["Embedding Visualization", "Add Document", "Delete Document"])
 
-tabs = gr.TabbedInterface([tab1, tab2],
+tabs = gr.TabbedInterface([chat_interface, tab2],
                           tab_names=["Chat", "Database Management"])
 
 if __name__ == "__main__":
