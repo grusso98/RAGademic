@@ -6,7 +6,7 @@ This project provides a **Retrieval-Augmented Generation (RAG)** system to query
 - **Chat with your notes**: Ask questions, and the system retrieves relevant information using embeddings.
 - **Database management**: Upload, delete, and visualize document embeddings.
 - **Two LLM options**: Use either OpenAI's API or a local **LLaMA** model via an OpenAI-compatible API.
-- **Two Embedding options**: Use either OpenAI's embedder or a HF embedder from the hub.
+- **Three Embedding options**: Use either OpenAI's embedder, HF embedder from the hub or chroma builtin local embedder.
 
 ---
 
@@ -28,13 +28,13 @@ pip install -r requirements.txt
 Also create .env file and add:
 ```bash
 OPENAI_API_KEY=<your_key>
-EMBEDDER_TYPE=huggingface
+EMBEDDER_TYPE=<type> 
 HF_TOKEN=<your_token> 
 ```
 Notes: 
-- you can use llama3.2 installing it locally with ollama
-- the openai api key is needed if you use gpt for chatting and/or openai embeddings
-- embedder_type can either be **huggingface** or **openai**
+- you can use llama3.2 installing it locally with ollama.
+- the openai api key is needed if you use gpt for chatting and/or openai embeddings.
+- embedder_type can be **huggingface** or **openai** or **local** which uses chroma built in vectorizer.
 - the huggingface embedding is obtained through API but it could be done locally too.
 
 ### 3. Load your PDF
