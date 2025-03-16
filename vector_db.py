@@ -1,3 +1,4 @@
+import json
 import chromadb
 from chromadb.utils import embedding_functions
 import os
@@ -6,17 +7,14 @@ import glog
 from typing import Optional, Dict
 import chromadb.utils.embedding_functions as embedding_functions
 
-load_dotenv()
+load_dotenv(override=True)
 
-# Load configuration
 EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "openai")  # Default to OpenAI
 VECTOR_DB_PATH = "./chroma_db"
 collection_name = "university_notes"
 
-# Initialize ChromaDB client
 client = chromadb.PersistentClient(path=VECTOR_DB_PATH)
 
-# Choose embedder based on config
 if EMBEDDER_TYPE == "openai":
     openai_api_key = os.getenv("OPENAI_API_KEY")
     embedder = embedding_functions.OpenAIEmbeddingFunction(
@@ -29,7 +27,6 @@ elif EMBEDDER_TYPE == "huggingface":
 else:
     raise ValueError(f"Unsupported embedder type: {EMBEDDER_TYPE}")
 
-# Initialize collection
 collection = client.get_or_create_collection(name=collection_name,
                                              embedding_function=embedder)
 
@@ -53,16 +50,20 @@ def add_document(doc_id: str,
     Returns:
         str: A message indicating the success or reason for skipping the document.
     """
-    # Default empty metadata if None is provided
     if metadata is None:
         metadata = {}
+
+    try:
+        json.dumps(metadata)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Metadata is not JSON-serializable: {metadata}") from e
 
     existing_docs = collection.get(ids=[doc_id])
     if not existing_docs["ids"]:
         collection.add(ids=[doc_id], documents=[content], metadatas=[metadata])
         return f"Document {doc_id} added successfully."
 
-    glog.info("Document already in database")
     return f"Document {doc_id} already exists in the collection. Skipping embedding."
 
 
