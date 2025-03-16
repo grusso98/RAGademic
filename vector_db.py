@@ -24,6 +24,9 @@ elif EMBEDDER_TYPE == "huggingface":
         api_key=os.getenv("HF_TOKEN"),
         model_name="sentence-transformers/all-MiniLM-L6-v2",
     )
+elif EMBEDDER_TYPE == "local":
+    embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name="all-MiniLM-L6-v2")
 else:
     raise ValueError(f"Unsupported embedder type: {EMBEDDER_TYPE}")
 
@@ -78,7 +81,11 @@ def query_documents(query_text: str, n_results: int = 5) -> Dict:
     Returns:
         Dict: A dictionary containing the query results, including document IDs and metadata.
     """
-    results = collection.query(query_texts=[query_text], n_results=n_results)
+    results = collection.query(
+        query_texts=[query_text],
+        n_results=n_results,
+        include=['documents', 'metadatas', 'distances'],
+    )
     return results
 
 
