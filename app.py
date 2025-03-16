@@ -5,11 +5,12 @@ import glob
 import numpy as np
 from sklearn.manifold import TSNE
 from dotenv import load_dotenv
+import urllib
 from vector_db import (add_document, query_documents, delete_document,
                        list_documents)
 from PyPDF2 import PdfReader
 from openai import OpenAI
-from typing import List, Optional
+from typing import Generator, List, Optional
 import glog
 import plotly.graph_objs as go
 
@@ -68,19 +69,25 @@ def load_notes() -> None:
 
                     for i, chunk in enumerate(chunks):
                         chunk_id = f"{doc_id}_part{i}"
-                        add_document(chunk_id, chunk, {"category": category})
+                        add_document(
+                            chunk_id, chunk, {
+                                "category": category,
+                                "file_path": os.path.abspath(file_path),
+                                "chunk_index": i
+                            })
 
 
-def query_rag(query: str,
-              model: str,
-              history: Optional[List[str]] = None) -> str:
+def query_rag(
+        query: str,
+        model: str,
+        history: Optional[List[str]] = None) -> Generator[str, None, None]:
     """
     Handles querying the vector DB and generating a streaming response.
 
     Args:
         query (str): The query text to be asked.
-        history (Optional[List[str]], optional): A list of previous interactions 
-        (defaults to None).
+        model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
+        history (Optional[List[str]], optional): Previous chat history.
 
     Yields:
         str: A progressively generated response from the model.
@@ -91,9 +98,43 @@ def query_rag(query: str,
     results = query_documents(query)
     context = "\n\n".join([
         " ".join(doc) if isinstance(doc, list) else doc
-        for doc in results.get("documents", [])
+        for sublist in results.get("documents", [])  # Iterate over sublists
+        for doc in sublist  # Extract each document inside the sublists
     ])
+
+    sources = []
+    for i, meta in enumerate(results.get("metadatas", [])):
+        doc_text = results["documents"][i][0]
+
+        if isinstance(meta, list):
+            meta = meta[0]
+            if isinstance(meta, dict):
+                file_path = meta.get("file_path", "#")
+                clean_text = " ".join(
+                    doc_text.split())  # Remove excessive spaces/newlines
+                chunk_text = clean_text[:200].rsplit(
+                    " ", 1)[0] + "..." if len(clean_text) > 200 else clean_text
+                chunk_index = meta.get("chunk_index", 0)
+            else:
+                file_path = "#"
+                chunk_text = "No preview available"
+                chunk_index = 0
+
+        if file_path and file_path != "#":
+            encoded_path = urllib.parse.quote(file_path)
+            pdf_viewer_url = f"file://{encoded_path}#page={chunk_index + 1}"
+            sources.append(
+                f'- <a href="{pdf_viewer_url}" target="_blank">{chunk_text.replace("\n", " ")[:150]}...</a>'
+            )
+
+        else:
+            sources.append(f"- {chunk_text}...")
+
+    sources_text = "\n\n**Sources:**\n" + "\n".join(
+        sources) if sources else "\n\n**Sources:**\n- No available sources."
+
     prompt = f"You are a helpful university tutor. Answer the question based on the provided notes. Also state the sources. \n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+
     if model == "llama3.2":
         openai = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
     elif model == "gpt-4o-mini":
@@ -102,6 +143,7 @@ def query_rag(query: str,
         OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "")
         if OPENAI_API_BASE:
             openai.api_base = OPENAI_API_BASE
+
     response = openai.chat.completions.create(model=model,
                                               messages=[{
                                                   "role":
@@ -120,6 +162,8 @@ def query_rag(query: str,
                 0].delta.content:
             full_response += chunk.choices[0].delta.content
             yield full_response
+
+    yield full_response + sources_text
 
 
 def visualize_embeddings_interactive() -> go.Figure:
@@ -216,7 +260,10 @@ def add_document_interface(file: gr.File) -> str:
 
     for i, chunk in enumerate(chunks):
         chunk_id = f"{file_name}_part{i}"
-        add_document(chunk_id, chunk, {})
+        add_document(chunk_id, chunk, {
+            "file_path": os.path.abspath(file.name),
+            "chunk_index": i
+        })
 
     return f"Document {file_name} added successfully in {len(chunks)} chunks."
 
@@ -251,7 +298,7 @@ tab1 = gr.Interface(fn=query_rag,
                                  value="gpt-4o-mini",
                                  label="Choose Model")
                     ],
-                    outputs="text",
+                    outputs=gr.Markdown(),
                     title="Query your University Notes")
 tab2 = gr.TabbedInterface(
     [
