@@ -1,7 +1,6 @@
 import os
 import random
 import gradio as gr
-import glob
 import numpy as np
 from sklearn.manifold import TSNE
 from dotenv import load_dotenv
@@ -42,52 +41,16 @@ def chunk_text(text: str,
     return chunks
 
 
-def load_notes() -> None:
+def query_rag(query: str, model: str, history: Optional[List[str]],
+              use_rag: bool) -> Generator[str, None, None]:
     """
-    Loads notes from the knowledge base folder and adds them to the vector DB.
-
-    This function iterates through all categories and files in the knowledge
-    base folder, extracts the text from PDF documents, chunks the content,
-    and adds it to the vector database.
-
-    Returns:
-        None
-    """
-    for category in os.listdir(KB_FOLDER):
-        category_path = os.path.join(KB_FOLDER, category)
-        if os.path.isdir(category_path):
-            for file_path in glob.glob(f"{category_path}/*.pdf"):
-                with open(file_path, "rb") as f:
-                    reader = PdfReader(f)
-                    content = "\n".join([
-                        page.extract_text() for page in reader.pages
-                        if page.extract_text()
-                    ])
-
-                    chunks = chunk_text(content, chunk_size=1000, overlap=200)
-                    doc_id = os.path.basename(file_path)
-
-                    for i, chunk in enumerate(chunks):
-                        chunk_id = f"{doc_id}_part{i}"
-                        add_document(
-                            chunk_id, chunk, {
-                                "category": category,
-                                "file_path": os.path.abspath(file_path),
-                                "chunk_index": i
-                            })
-
-
-def query_rag(
-        query: str,
-        model: str,
-        history: Optional[List[str]] = None) -> Generator[str, None, None]:
-    """
-    Handles querying the vector DB and generating a streaming response.
+    Handles querying the vector DB (if enabled) and generating a streaming response.
 
     Args:
         query (str): The query text to be asked.
         model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
         history (Optional[List[str]], optional): Previous chat history.
+        use_rag (bool): Whether to retrieve relevant documents from the vector database.
 
     Yields:
         str: A progressively generated response from the model.
@@ -95,54 +58,55 @@ def query_rag(
     if history is None:
         history = []
 
-    results = query_documents(query)
-    context = "\n\n".join([
-        " ".join(doc) if isinstance(doc, list) else doc
-        for sublist in results.get("documents", [])  # Iterate over sublists
-        for doc in sublist  # Extract each document inside the sublists
-    ])
+    context = ""
+    sources_text = ""
 
-    sources = []
-    for i, meta in enumerate(results.get("metadatas", [])):
-        doc_text = results["documents"][i][0]
+    if use_rag:  # Only retrieve documents if RAG is enabled
+        results = query_documents(query)
+        context = "\n\n".join([
+            " ".join(doc) if isinstance(doc, list) else doc
+            for sublist in results.get("documents", []) for doc in sublist
+        ])
 
-        if isinstance(meta, list):
-            meta = meta[0]
-            if isinstance(meta, dict):
+        sources = []
+        for i, meta in enumerate(results.get("metadatas", [])):
+            doc_text = results["documents"][i][0]
+
+            if isinstance(meta, list):
+                meta = meta[0]
                 file_path = meta.get("file_path", "#")
-                clean_text = " ".join(
-                    doc_text.split())  # Remove excessive spaces/newlines
-                chunk_text = clean_text[:200].rsplit(
-                    " ", 1)[0] + "..." if len(clean_text) > 200 else clean_text
                 chunk_index = meta.get("chunk_index", 0)
+                clean_text = " ".join(doc_text.split())[:200] + "..."
             else:
                 file_path = "#"
-                chunk_text = "No preview available"
                 chunk_index = 0
+                clean_text = "No preview available"
 
-        if file_path and file_path != "#":
-            encoded_path = urllib.parse.quote(file_path)
-            pdf_viewer_url = f"file://{encoded_path}#page={chunk_index + 1}"
-            sources.append(
-                f'- <a href="{pdf_viewer_url}" target="_blank">{chunk_text.replace("\n", " ")[:150]}...</a>'
-            )
+            if file_path and file_path != "#":
+                encoded_path = urllib.parse.quote(file_path)
+                pdf_viewer_url = f"file://{encoded_path}#page={chunk_index + 1}"
+                sources.append(
+                    f'- <a href="{pdf_viewer_url}" target="_blank">{clean_text}</a>'
+                )
+            else:
+                sources.append(f"- {clean_text}...")
 
-        else:
-            sources.append(f"- {chunk_text}...")
+        sources_text = "\n\n**Sources:**\n" + "\n".join(
+            sources
+        ) if sources else "\n\n**Sources:**\n- No available sources."
 
-    sources_text = "\n\n**Sources:**\n" + "\n".join(
-        sources) if sources else "\n\n**Sources:**\n- No available sources."
-
-    prompt = f"You are a helpful university tutor. Answer the question based on the provided notes. Also state the sources. \n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+    chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
+    prompt = f"You are a helpful university tutor. Answer the question based on the context. \n\n"
+    if use_rag:
+        prompt += f"Context:\n{context}\n\n"
+    prompt += f"Chat History:\n{chat_history}\n\nQuestion: {query}\nAnswer:"
 
     if model == "llama3.2":
         openai = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-    elif model == "gpt-4o-mini":
-        openai = OpenAI()
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "")
-        if OPENAI_API_BASE:
-            openai.api_base = OPENAI_API_BASE
+    else:
+        openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        if os.getenv("OPENAI_API_BASE"):
+            openai.api_base = os.getenv("OPENAI_API_BASE")
 
     response = openai.chat.completions.create(model=model,
                                               messages=[{
@@ -164,6 +128,32 @@ def query_rag(
             yield full_response
 
     yield full_response + sources_text
+
+
+def chatbot(query: str, model: str, history: List[List[str]],
+            use_rag: bool) -> List[List[str]]:
+    """
+    Handles chatbot interaction by maintaining conversation history.
+
+    Args:
+        query (str): The user's query.
+        model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
+        history (List[List[str]]): The conversation history.
+        use_rag (bool): Whether to retrieve relevant documents from the vector database.
+
+    Returns:
+        List[List[str]]: The updated conversation history.
+    """
+    if query.strip():
+        history.append([query, ""])
+
+    response_text = list(query_rag(query, model, history, use_rag))
+    response = response_text[-1] if response_text else ""
+
+    if response.strip():
+        history.append(["", response])
+
+    return history
 
 
 def visualize_embeddings_interactive() -> go.Figure:
@@ -282,57 +272,26 @@ def delete_document_interface(doc_id: str) -> str:
     return f"Document {doc_id} deleted successfully."
 
 
-def chatbot(query, model, history):
-    """
-    Handles the chatbot interaction by maintaining conversation history.
-
-    Args:
-        query (str): The user's query.
-        model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
-        history (List[Tuple[str, str]]): The conversation history.
-
-    Returns:
-        List[Tuple[str, str]]: The updated conversation history.
-    """
-    # Append the user message to the history if it's not empty
-    if query.strip():
-        history.append((query, ""))
-
-    # Generate the assistant's response
-    response_text = list(
-        query_rag(query, model, [msg[0] for msg in history if msg[1] == ""]))
-    response = response_text[-1] if response_text else ""
-
-    # Append the assistant's response to the history if it's not empty
-    if response.strip():
-        history.append(("", response))
-
-    return history
-
-
-# Load OpenAI API key
 load_dotenv()
 
-# Knowledge base folder
-KB_FOLDER = "knowledge_base"
-
-# Load notes at startup
-load_notes()
-
-# Gradio interface for chat-like interaction
 with gr.Blocks() as chat_interface:
+    gr.Markdown('# RAGademic: query your notes!')
     chatbot_interface = gr.Chatbot()
     model_selector = gr.Radio(choices=["gpt-4o-mini", "llama3.2"],
                               value="gpt-4o-mini",
                               label="Choose Model")
+    use_rag_toggle = gr.Checkbox(label="Enable RAG", value=True)
     user_input = gr.Textbox(label="Enter your query")
 
-    def respond(query, model, history):
-        updated_history = chatbot(query, model, history)
+    def respond(query: str, model: str, history: List[List[str]],
+                use_rag: bool):
+        updated_history = chatbot(query, model, history, use_rag)
         return gr.update(value=""), updated_history
 
-    user_input.submit(respond, [user_input, model_selector, chatbot_interface],
-                      [user_input, chatbot_interface])
+    user_input.submit(
+        respond,
+        [user_input, model_selector, chatbot_interface, use_rag_toggle],
+        [user_input, chatbot_interface])
 
 tab2 = gr.TabbedInterface(
     [
