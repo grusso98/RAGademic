@@ -1,6 +1,6 @@
-# RAGademic: Query Your University Notes
+# RAGademic: Query Your University Notes and Books!
 
-This project provides a **Retrieval-Augmented Generation (RAG)** system to query your university notes efficiently (could be used to retrieve any kind of document really, but this is the use case i've opted for! :) ). It allows users to upload PDF documents, store them in a **Chroma** vector database, and interact with them through an LLM-powered chatbot. The project also includes a visualization tool for document embeddings.
+This project provides a **Retrieval-Augmented Generation (RAG)** system to query your university notes and books efficiently (could be used to retrieve any kind of document really, but this is the use case i've opted for! :) ). It allows users to upload PDF documents, store them in a **Chroma** vector database, and interact with them through an LLM-powered chatbot. The project also includes a visualization tool for document embeddings.
 
 ## Features
 - **Chat with your notes**: Ask questions, and the system retrieves relevant information using embeddings.
