@@ -65,7 +65,8 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
         results = query_documents(query)
         context = "\n\n".join([
             " ".join(doc) if isinstance(doc, list) else doc
-            for sublist in results.get("documents", []) for doc in sublist
+            for sublist in results.get("documents", [])
+            for doc in sublist
         ])
 
         sources = []
@@ -92,14 +93,14 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
                 sources.append(f"- {clean_text}...")
 
         sources_text = "\n\n**Sources:**\n" + "\n".join(
-            sources
-        ) if sources else "\n\n**Sources:**\n- No available sources."
+            sources) if sources else "\n\n**Sources:**\n- No available sources."
 
     chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
-    prompt = f"You are a helpful university tutor. Answer the question based on the context. \n\n"
+    prompt = f"You are a helpful university tutor. Answer the question also based on the conversation context.\n"
     if use_rag:
+        prompt = f"You are a helpful university tutor. Answer the question based on the context. \n\n"
         prompt += f"Context:\n{context}\n\n"
-    prompt += f"Chat History:\n{chat_history}\n\nQuestion: {query}\nAnswer:"
+    prompt += f"Chat History:\n{chat_history}\n\nQuestion: {query}\n"
 
     if model == "llama3.2":
         openai = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
@@ -108,17 +109,16 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
         if os.getenv("OPENAI_API_BASE"):
             openai.api_base = os.getenv("OPENAI_API_BASE")
 
-    response = openai.chat.completions.create(model=model,
-                                              messages=[{
-                                                  "role":
-                                                  "system",
-                                                  "content":
-                                                  "You are a university tutor."
-                                              }, {
-                                                  "role": "user",
-                                                  "content": prompt
-                                              }],
-                                              stream=True)
+    response = openai.chat.completions.create(
+        model=model,
+        messages=[{
+            "role": "system",
+            "content": "You are a university tutor."
+        }, {
+            "role": "user",
+            "content": prompt
+        }],
+        stream=True)
 
     full_response = ""
     for chunk in response:
