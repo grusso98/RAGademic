@@ -1,3 +1,4 @@
+import glob
 import os
 import random
 import gradio as gr
@@ -9,14 +10,62 @@ from vector_db import (add_document, query_documents, delete_document,
                        list_documents)
 from PyPDF2 import PdfReader
 from openai import OpenAI
-from typing import Generator, List, Optional
+from typing import List, Optional
 import glog
 import plotly.graph_objs as go
+import ollama
 
+load_dotenv(override=True)
 
+_SYSTEM_PROMPT: str ="""
+You are a helpful university tutor, students will ask you questions about their 
+books or studies. You may be pprovided with additional context for some questions.
+If provided, answer based on the context. If you do not know something, clearly
+state it.
+"""
+_BASE_PROMPT: str = """
+Answer questions also based on the context.\n
+"""
+_QUANTIZATION: str = os.getenv("QUANTIZATION", "4b")
+_KB_FOLDER: str = "knowledge_base/"
+
+def load_notes() -> None:
+    """
+    Loads notes from the knowledge base folder and adds them to the vector DB.
+
+    This function iterates through all categories and files in the knowledge
+    base folder, extracts the text from PDF documents, chunks the content,
+    and adds it to the vector database.
+
+    Returns:
+        None
+    """
+    for category in os.listdir(_KB_FOLDER):
+        category_path = os.path.join(_KB_FOLDER, category)
+        if os.path.isdir(category_path):
+            for file_path in glob.glob(f"{category_path}/*.pdf"):
+                with open(file_path, "rb") as f:
+                    reader = PdfReader(f)
+                    content = "\n".join([
+                        page.extract_text() for page in reader.pages
+                        if page.extract_text()
+                    ])
+
+                    chunks = chunk_text(content, chunk_size=2000, overlap=400)
+                    doc_id = os.path.basename(file_path)
+
+                    for i, chunk in enumerate(chunks):
+                        chunk_id = f"{doc_id}_part{i}"
+                        add_document(
+                            chunk_id, chunk, {
+                                "category": category,
+                                "file_path": os.path.abspath(file_path),
+                                "chunk_index": i
+                            })
+                        
 def chunk_text(text: str,
-               chunk_size: int = 1000,
-               overlap: int = 200) -> List[str]:
+               chunk_size: int = 2000,
+               overlap: int = 400) -> List[str]:
     """
     Splits text into overlapping chunks of the specified size.
 
@@ -42,7 +91,7 @@ def chunk_text(text: str,
 
 
 def query_rag(query: str, model: str, history: Optional[List[str]],
-              use_rag: bool) -> Generator[str, None, None]:
+              use_rag: bool) -> str:
     """
     Handles querying the vector DB (if enabled) and generating a streaming response.
 
@@ -96,38 +145,38 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
             sources) if sources else "\n\n**Sources:**\n- No available sources."
 
     chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
-    prompt = f"You are a helpful university tutor. Answer the question also based on the conversation context.\n"
+    prompt = _BASE_PROMPT
     if use_rag:
-        prompt = f"You are a helpful university tutor. Answer the question based on the context. \n\n"
         prompt += f"Context:\n{context}\n\n"
-    prompt += f"Chat History:\n{chat_history}\n\nQuestion: {query}\n"
+    prompt += f"Chat History:\n{chat_history}\n\n Question: {query}\n"
 
-    if model == "llama3.2":
-        openai = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+    if model == "llama3.2" or model == "gemma3":
+        if model == "gemma3":
+            model = model + ":" + _QUANTIZATION
+        response = ollama.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+        )
+        return response["message"]["content"] + sources_text
+
     else:
         openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         if os.getenv("OPENAI_API_BASE"):
             openai.api_base = os.getenv("OPENAI_API_BASE")
-
-    response = openai.chat.completions.create(
-        model=model,
-        messages=[{
-            "role": "system",
-            "content": "You are a university tutor."
-        }, {
-            "role": "user",
-            "content": prompt
-        }],
-        stream=True)
-
-    full_response = ""
-    for chunk in response:
-        if chunk.choices and chunk.choices[0].delta and chunk.choices[
-                0].delta.content:
-            full_response += chunk.choices[0].delta.content
-            yield full_response
-
-    yield full_response + sources_text
+        response = openai.chat.completions.create(
+            model=model,
+            messages=[{
+                "role": "system",
+                "content": _SYSTEM_PROMPT
+            }, {
+                "role": "user",
+                "content": prompt
+            }],
+        )
+        return response.choices[0].message.content +sources_text
 
 
 def chatbot(query: str, model: str, history: List[List[str]],
@@ -147,8 +196,7 @@ def chatbot(query: str, model: str, history: List[List[str]],
     if query.strip():
         history.append([query, ""])
 
-    response_text = list(query_rag(query, model, history, use_rag))
-    response = response_text[-1] if response_text else ""
+    response = query_rag(query, model, history, use_rag)
 
     if response.strip():
         history.append(["", response])
@@ -271,13 +319,10 @@ def delete_document_interface(doc_id: str) -> str:
     delete_document(doc_id)
     return f"Document {doc_id} deleted successfully."
 
-
-load_dotenv()
-
 with gr.Blocks() as chat_interface:
     gr.Markdown('# RAGademic: query your notes!')
     chatbot_interface = gr.Chatbot()
-    model_selector = gr.Radio(choices=["gpt-4o-mini", "llama3.2"],
+    model_selector = gr.Radio(choices=["gpt-4o-mini", "llama3.2", "gemma3"],
                               value="gpt-4o-mini",
                               label="Choose Model")
     use_rag_toggle = gr.Checkbox(label="Enable RAG", value=True)
@@ -293,22 +338,29 @@ with gr.Blocks() as chat_interface:
         [user_input, model_selector, chatbot_interface, use_rag_toggle],
         [user_input, chatbot_interface])
 
-tab2 = gr.TabbedInterface(
-    [
+with gr.Blocks() as tab2:
+    with gr.Tab("Load Notes"):
+        load_button = gr.Button("Load Notes")
+        output = gr.Textbox(label="Output")
+        load_button.click(fn=load_notes, outputs=output)
+
+    with gr.Tab("Embedding Visualization"):
         gr.Interface(fn=visualize_embeddings_interactive,
                      inputs=[],
                      outputs=gr.Plot(),
-                     title="Visualize Embeddings"),
+                     title="Visualize Embeddings")
+
+    with gr.Tab("Add Document"):
         gr.Interface(fn=add_document_interface,
                      inputs="file",
                      outputs="text",
-                     title="Add Document"),
+                     title="Add Document")
+
+    with gr.Tab("Delete Document"):
         gr.Interface(fn=delete_document_interface,
                      inputs="text",
                      outputs="text",
                      title="Delete Document")
-    ],
-    tab_names=["Embedding Visualization", "Add Document", "Delete Document"])
 
 tabs = gr.TabbedInterface([chat_interface, tab2],
                           tab_names=["Chat", "Database Management"])
