@@ -1,19 +1,20 @@
 import glob
 import os
 import random
+import urllib
+from typing import List, Optional
+
+import glog
 import gradio as gr
 import numpy as np
-from sklearn.manifold import TSNE
-from dotenv import load_dotenv
-import urllib
-from vector_db import (add_document, query_documents, delete_document,
-                       list_documents)
-from PyPDF2 import PdfReader
-from openai import OpenAI
-from typing import List, Optional
-import glog
-import plotly.graph_objs as go
 import ollama
+import plotly.graph_objs as go
+from dotenv import load_dotenv
+from openai import OpenAI
+from PyPDF2 import PdfReader
+from sklearn.manifold import TSNE
+from vector_db import (add_document, delete_document, list_documents,
+                       query_documents)
 
 load_dotenv(override=True)
 

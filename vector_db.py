@@ -1,15 +1,16 @@
 import json
-import chromadb
-from chromadb.utils import embedding_functions
 import os
-from dotenv import load_dotenv
-import glog
-from typing import Optional, Dict
+from typing import Dict, Optional
+
+import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
+import glog
+from chromadb.utils import embedding_functions
+from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "openai")  # Default to OpenAI
+EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "local")  # Default to OpenAI
 VECTOR_DB_PATH = "./chroma_db"
 collection_name = "university_notes"
 
