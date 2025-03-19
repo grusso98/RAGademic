@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "local")  # Default to OpenAI
+EMBEDDER_TYPE = os.getenv("EMBEDDER_TYPE", "local")  # Default to local
 VECTOR_DB_PATH = "./chroma_db"
 collection_name = "university_notes"
 
