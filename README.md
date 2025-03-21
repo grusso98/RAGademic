@@ -56,3 +56,10 @@ python3 app.py
 ![Chat Interface](./imgs/chat.png)
 #### DB Management Interface
 ![DB management Interface](./imgs/db_management.png)
+
+### Author: 
+<div align="center">
+    <p>Gianmarco Russo</p>
+    <a href="https://www.linkedin.com/in/grusso98/" style="text-decoration:none;">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/LinkedIn_logo_initials.png/640px-LinkedIn_logo_initials.png" width="2%" alt="" /></a>
+  </div> 
