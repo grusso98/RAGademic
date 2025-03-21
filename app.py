@@ -322,7 +322,7 @@ def delete_document_interface(doc_id: str) -> str:
 
 with gr.Blocks() as chat_interface:
     gr.Markdown('# RAGademic: query your notes!')
-    chatbot_interface = gr.Chatbot()
+    chatbot_interface = gr.Chatbot(resizable=True)
     model_selector = gr.Radio(choices=["gpt-4o-mini", "llama3.2", "gemma3"],
                               value="gpt-4o-mini",
                               label="Choose Model")
