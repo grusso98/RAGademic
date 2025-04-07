@@ -163,7 +163,7 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
     context = ""
     sources_text = ""
 
-    if use_rag:  # Only retrieve documents if RAG is enabled
+    if use_rag:  
         results = query_documents(query)
         context = "\n\n".join([
             " ".join(doc) if isinstance(doc, list) else doc
@@ -177,26 +177,28 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
 
             if isinstance(meta, list):
                 meta = meta[0]
-                file_path = meta.get("file_path", "#")
-                chunk_index = meta.get("chunk_index", 0)
-                clean_text = " ".join(doc_text.split())[:200] + "..."
-            else:
-                file_path = "#"
-                chunk_index = 0
-                clean_text = "No preview available"
 
-            if file_path and file_path != "#":
+            title = meta.get("title") or meta.get("filename") or "Untitled"
+            if len(title) > 60:
+                title = title[:57] + "..."
+
+            clean_preview = " ".join(doc_text.strip().split())[:120] + "..."
+
+            file_path = meta.get("file_path")
+            arxiv_id = meta.get("arxiv_id")
+            chunk_index = meta.get("chunk_index", 0)
+
+            if arxiv_id:
+                url = f"https://arxiv.org/abs/{arxiv_id}"
+            elif file_path:
                 encoded_path = urllib.parse.quote(file_path)
-                pdf_viewer_url = f"file://{encoded_path}#page={chunk_index + 1}"
-                sources.append(
-                    f'- <a href="{pdf_viewer_url}" target="_blank">{clean_text}</a>'
-                )
+                url = f"file://{encoded_path}#page={chunk_index + 1}"
             else:
-                sources.append(f"- {clean_text}...")
+                url = "#"
 
-        sources_text = "\n\n**Sources:**\n" + "\n".join(
-            sources) if sources else "\n\n**Sources:**\n- No available sources."
+            sources.append(f"[{i + 1}] [{title}]({url}) — {clean_preview}")
 
+    sources_text = "\n\n**Sources:**\n" + "\n".join(sources) if sources else "\n\n**Sources:**\n- No available sources."
     chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
     prompt = _BASE_PROMPT
     if use_rag:
