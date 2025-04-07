@@ -1,6 +1,7 @@
 import glob
 import os
 import random
+import requests
 import urllib
 from typing import List, Optional
 
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from PyPDF2 import PdfReader
 from sklearn.manifold import TSNE
+import xml.etree.ElementTree as ET
 from vector_db import (add_document, delete_document, list_documents,
                        query_documents)
 
@@ -90,6 +92,56 @@ def chunk_text(text: str,
 
     return chunks
 
+
+def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
+    """
+    Searches arXiv for papers related to the query and ingests abstracts into the vector DB.
+
+    Args:
+        query (str): The user query/topic to search.
+        max_results (int): Number of papers to fetch.
+
+    Returns:
+        str: Summary of ingestion results.
+    """
+    glog.info(f"Searching arXiv for query: {query}")
+    url = f"http://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(query)}&start=0&max_results={max_results}"
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        return "Failed to fetch papers from arXiv."
+
+    root = ET.fromstring(response.content)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    entries = root.findall("atom:entry", ns)
+
+    if not entries:
+        return "No papers found."
+
+    count = 0
+    for entry in entries:
+        title = entry.find("atom:title", ns).text.strip()
+        abstract = entry.find("atom:summary", ns).text.strip()
+        arxiv_id = entry.find("atom:id", ns).text.split('/')[-1]
+        link = entry.find("atom:link[@type='text/html']", ns).attrib['href']
+
+        full_text = f"Title: {title}\nAbstract: {abstract}\nLink: {link}"
+        chunks = chunk_text(full_text)
+
+        for i, chunk in enumerate(chunks):
+            chunk_id = f"{arxiv_id}_part{i}"
+            add_document(chunk_id, chunk, {
+                "source": "arXiv",
+                "category": f"arXiv_{query.lower().replace(' ', '_')}",
+                "query": query,
+                "arxiv_id": arxiv_id,
+                "link": link,
+                "chunk_index": i,
+            })
+
+        count += 1
+
+    return f"Ingested {count} papers from arXiv for query '{query}'."
 
 def query_rag(query: str, model: str, history: Optional[List[str]],
               use_rag: bool) -> str:
@@ -177,7 +229,7 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
                 "content": prompt
             }],
         )
-        return response.choices[0].message.content +sources_text
+        return response.choices[0].message.content + sources_text
 
 
 def chatbot(query: str, model: str, history: List[List[str]],
@@ -340,6 +392,15 @@ with gr.Blocks() as chat_interface:
         [user_input, chatbot_interface])
 
 with gr.Blocks() as tab2:
+    with gr.Tab("Fetch Papers from arXiv"):
+        search_box = gr.Textbox(label="Search Query")
+        search_button = gr.Button("Search and Add Papers")
+        search_output = gr.Textbox(label="Output")
+
+        search_button.click(fn=search_and_ingest_papers,
+                            inputs=[search_box],
+                            outputs=[search_output])
+        
     with gr.Tab("Load Notes"):
         load_button = gr.Button("Load Notes")
         output = gr.Textbox(label="Output")
