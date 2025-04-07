@@ -30,14 +30,14 @@ Also create .env file and add:
 OPENAI_API_KEY=<your_key>
 EMBEDDER_TYPE=<type> 
 HF_TOKEN=<your_token> 
-QUANTIZATION=<4b>
+MODEL_SIZE=<number_of_params>
 ```
 Notes: 
 - you can use llama3.2 installing it locally with ollama.
 - the openai api key is needed if you use gpt for chatting and/or openai embeddings.
 - embedder_type can be **huggingface** or **openai** or **local** which uses chroma built in vectorizer.
 - the huggingface embedding is obtained through API but it could be done locally too.
-- when using Gemma, provide the quantization of the model you pulled.
+- when using Gemma, provide the size of the model you pulled.
 
 ### 3. Load your PDF
 Load PDFs 

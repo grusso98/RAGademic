@@ -27,7 +27,7 @@ state it.
 _BASE_PROMPT: str = """
 Answer questions also based on the context.\n
 """
-_QUANTIZATION: str = os.getenv("QUANTIZATION", "4b")
+_MODEL_SIZE: str = os.getenv("MODEL_SIZE", "4b")
 _KB_FOLDER: str = "knowledge_base/"
 
 def load_notes() -> None:
@@ -153,7 +153,7 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
 
     if model == "llama3.2" or model == "gemma3":
         if model == "gemma3":
-            model = model + ":" + _QUANTIZATION
+            model = model + ":" + _MODEL_SIZE
         response = ollama.chat(
             model=model,
             messages=[
