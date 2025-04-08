@@ -1,8 +1,8 @@
 import glob
 import os
 import random
-import requests
 import urllib
+import xml.etree.ElementTree as ET
 from typing import List, Optional
 
 import glog
@@ -10,11 +10,12 @@ import gradio as gr
 import numpy as np
 import ollama
 import plotly.graph_objs as go
+import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 from PyPDF2 import PdfReader
 from sklearn.manifold import TSNE
-import xml.etree.ElementTree as ET
+
 from vector_db import (add_document, delete_document, list_documents,
                        query_documents)
 
@@ -22,7 +23,7 @@ load_dotenv(override=True)
 
 _SYSTEM_PROMPT: str ="""
 You are a helpful university tutor, students will ask you questions about their 
-books or studies. You may be pprovided with additional context for some questions.
+books, studies or articles. You may be provided with additional context for some questions.
 If provided, answer based on the context. If you do not know something, clearly
 state it.
 """
@@ -162,7 +163,7 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
 
     context = ""
     sources_text = ""
-
+    sources = []
     if use_rag:  
         results = query_documents(query)
         context = "\n\n".join([
@@ -171,7 +172,6 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
             for doc in sublist
         ])
 
-        sources = []
         for i, meta in enumerate(results.get("metadatas", [])):
             doc_text = results["documents"][i][0]
 
@@ -212,7 +212,7 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": chat_history + prompt}
             ],
         )
         return response["message"]["content"] + sources_text
