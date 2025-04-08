@@ -249,13 +249,8 @@ def chatbot(query: str, model: str, history: List[List[str]],
         List[List[str]]: The updated conversation history.
     """
     if query.strip():
-        history.append([query, ""])
-
-    response = query_rag(query, model, history, use_rag)
-
-    if response.strip():
-        history.append(["", response])
-
+        response = query_rag(query, model, history, use_rag)
+        history.append([query, response])
     return history
 
 
