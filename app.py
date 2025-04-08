@@ -144,27 +144,13 @@ def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
 
     return f"Ingested {count} papers from arXiv for query '{query}'."
 
-def query_rag(query: str, model: str, history: Optional[List[str]],
-              use_rag: bool) -> str:
-    """
-    Handles querying the vector DB (if enabled) and generating a streaming response.
-
-    Args:
-        query (str): The query text to be asked.
-        model (str): The model to use (e.g., 'llama3.2' or 'gpt-4o-mini').
-        history (Optional[List[str]], optional): Previous chat history.
-        use_rag (bool): Whether to retrieve relevant documents from the vector database.
-
-    Yields:
-        str: A progressively generated response from the model.
-    """
+def query_rag(query: str, model: str, history: Optional[List[str]], use_rag: bool):
     if history is None:
         history = []
 
     context = ""
-    sources_text = ""
     sources = []
-    if use_rag:  
+    if use_rag:
         results = query_documents(query)
         context = "\n\n".join([
             " ".join(doc) if isinstance(doc, list) else doc
@@ -174,7 +160,6 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
 
         for i, meta in enumerate(results.get("metadatas", [])):
             doc_text = results["documents"][i][0]
-
             if isinstance(meta, list):
                 meta = meta[0]
 
@@ -182,30 +167,20 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
             if len(title) > 60:
                 title = title[:57] + "..."
 
-            clean_preview = " ".join(doc_text.strip().split())[:120] + "..."
-
+            preview = " ".join(doc_text.strip().split())[:120] + "..."
             file_path = meta.get("file_path")
             arxiv_id = meta.get("arxiv_id")
             chunk_index = meta.get("chunk_index", 0)
 
-            if arxiv_id:
-                url = f"https://arxiv.org/abs/{arxiv_id}"
-            elif file_path:
-                encoded_path = urllib.parse.quote(file_path)
-                url = f"file://{encoded_path}#page={chunk_index + 1}"
-            else:
-                url = "#"
-
-            sources.append(f"[{i + 1}] [{title}]({url}) — {clean_preview}")
+            url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else f"file://{urllib.parse.quote(file_path)}#page={chunk_index + 1}"
+            sources.append(f"[{i + 1}] [{title}]({url}) — {preview}")
 
     sources_text = "\n\n**Sources:**\n" + "\n".join(sources) if sources else "\n\n**Sources:**\n- No available sources."
     chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
-    prompt = _BASE_PROMPT
-    if use_rag:
-        prompt += f"Context:\n{context}\n\n"
+    prompt = _BASE_PROMPT + (f"Context:\n{context}\n\n" if use_rag else "")
     prompt += f"Chat History:\n{chat_history}\n\n Question: {query}\n"
 
-    if model == "llama3.2" or model == "gemma3":
+    if model in ["llama3.2", "gemma3"]:
         if model == "gemma3":
             model = model + ":" + _MODEL_SIZE
         response = ollama.chat(
@@ -214,24 +189,30 @@ def query_rag(query: str, model: str, history: Optional[List[str]],
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": chat_history + prompt}
             ],
+            stream=True
         )
-        return response["message"]["content"] + sources_text
+        for chunk in response:
+            if "message" in chunk and "content" in chunk["message"]:
+                yield chunk["message"]["content"]
+        yield sources_text
 
     else:
-        openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         if os.getenv("OPENAI_API_BASE"):
-            openai.api_base = os.getenv("OPENAI_API_BASE")
-        response = openai.chat.completions.create(
+            openai_client.api_base = os.getenv("OPENAI_API_BASE")
+        stream = openai_client.chat.completions.create(
             model=model,
-            messages=[{
-                "role": "system",
-                "content": _SYSTEM_PROMPT
-            }, {
-                "role": "user",
-                "content": prompt
-            }],
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            stream=True
         )
-        return response.choices[0].message.content + sources_text
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+        yield sources_text
+
 
 
 def chatbot(query: str, model: str, history: List[List[str]],
@@ -378,13 +359,15 @@ with gr.Blocks() as chat_interface:
     use_rag_toggle = gr.Checkbox(label="Enable RAG", value=True)
     user_input = gr.Textbox(label="Enter your query")
 
-    def respond(query: str, model: str, history: List[List[str]],
-                use_rag: bool):
-        updated_history = chatbot(query, model, history, use_rag)
-        return gr.update(value=""), updated_history
+    def respond_stream(query: str, model: str, history: List[List[str]], use_rag: bool):
+        response_gen = query_rag(query, model, history, use_rag)
+        full_response = ""
+        for chunk in response_gen:
+            full_response += chunk
+            yield "", history + [[query, full_response]]
 
     user_input.submit(
-        respond,
+        respond_stream,
         [user_input, model_selector, chatbot_interface, use_rag_toggle],
         [user_input, chatbot_interface])
 
