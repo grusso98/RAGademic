@@ -4,3 +4,5 @@
 /chroma_db
 /knowledge_base/*
 todo
+#exlude memory files
+*.json 
