@@ -8,6 +8,7 @@ This project provides a **Retrieval-Augmented Generation (RAG)** system to query
 - **Arxiv source addition**: Search for papers on specific topics and add them to your knowledge base.
 - **Three LLM options**: Use either OpenAI's API or local models like **LLaMA3.2** and the new **Gemma3** via ollama.chat.
 - **Three Embedding options**: Use either OpenAI's embedder, HF embedder from the hub or chroma builtin local embedder.
+- **Persistent memory**: Keeps track of conversations in between sessions, using llama3.2 as a summarizer to keep context windows occupation optmized.
 
 ---
 
@@ -57,7 +58,8 @@ python3 app.py
 ![Chat Interface](./imgs/chat.png)
 #### DB Management Interface
 ![DB management Interface](./imgs/db_management.png)
-
+#### Embeddings Visualization
+![DB management Interface](./imgs/embedding_viz.png)
 ### Author: 
 <div align="center">
     <p>Gianmarco Russo</p>
