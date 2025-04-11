@@ -5,6 +5,7 @@ import urllib
 import xml.etree.ElementTree as ET
 from typing import List, Optional
 
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import glog
 import gradio as gr
 import numpy as np
@@ -55,7 +56,7 @@ def load_notes() -> None:
                         if page.extract_text()
                     ])
 
-                    chunks = chunk_text(content, chunk_size=2000, overlap=400)
+                    chunks = semantic_chunk_text(content, chunk_size=2000, overlap=400)
                     doc_id = os.path.basename(file_path)
 
                     for i, chunk in enumerate(chunks):
@@ -67,31 +68,24 @@ def load_notes() -> None:
                                 "chunk_index": i
                             })
                         
-def chunk_text(text: str,
-               chunk_size: int = 2000,
-               overlap: int = 400) -> List[str]:
+def semantic_chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
     """
-    Splits text into overlapping chunks of the specified size.
+    Splits a given text into semantic chunks using a recursive character text splitter.
 
     Args:
-        text (str): The text to be split into chunks.
-        chunk_size (int, optional): The maximum size of each chunk.
-            Defaults to 1000.
-        overlap (int, optional): The number of overlapping characters between
-            consecutive chunks. Defaults to 200.
+        text (str): The input text to be split into chunks.
+        chunk_size (int, optional): The size of each chunk. Defaults to 1000.
+        overlap (int, optional): The amount of overlap between consecutive chunks. Defaults to 200.
 
     Returns:
         List[str]: A list of text chunks.
     """
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-
-    return chunks
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    return splitter.split_text(text)
 
 
 def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
@@ -127,7 +121,7 @@ def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
         link = entry.find("atom:link[@type='text/html']", ns).attrib['href']
 
         full_text = f"Title: {title}\nAbstract: {abstract}\nLink: {link}"
-        chunks = chunk_text(full_text)
+        chunks = semantic_chunk_text(full_text)
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"{arxiv_id}_part{i}"
@@ -325,7 +319,7 @@ def add_document_interface(file: gr.File) -> str:
         [page.extract_text() for page in reader.pages if page.extract_text()])
 
     # Chunking before ingestion
-    chunks = chunk_text(content, chunk_size=1000, overlap=200)
+    chunks = semantic_chunk_text(content, chunk_size=1000, overlap=200)
 
     for i, chunk in enumerate(chunks):
         chunk_id = f"{file_name}_part{i}"
