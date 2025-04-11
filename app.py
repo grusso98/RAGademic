@@ -68,7 +68,7 @@ def load_notes() -> None:
                                 "chunk_index": i
                             })
                         
-def semantic_chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+def semantic_chunk_text(text: str, chunk_size: int = 2000, overlap: int = 400) -> List[str]:
     """
     Splits a given text into semantic chunks using a recursive character text splitter.
 
@@ -152,22 +152,28 @@ def query_rag(query: str, model: str, history: Optional[List[str]], use_rag: boo
             for doc in sublist
         ])
 
-        for i, meta in enumerate(results.get("metadatas", [])):
-            doc_text = results["documents"][i][0]
-            if isinstance(meta, list):
-                meta = meta[0]
+        used_docs = set()
 
-            title = meta.get("title") or meta.get("filename") or "Untitled"
-            if len(title) > 60:
-                title = title[:57] + "..."
+        for i, (doc_group, meta_group) in enumerate(zip(results.get("documents", []), results.get("metadatas", []))):
+            for doc_text, meta in zip(doc_group, meta_group):
+                doc_id = meta.get("chunk_id") or meta.get("file_path")  
+                if doc_id in used_docs:
+                    continue
+                used_docs.add(doc_id)
 
-            preview = " ".join(doc_text.strip().split())[:120] + "..."
-            file_path = meta.get("file_path")
-            arxiv_id = meta.get("arxiv_id")
-            chunk_index = meta.get("chunk_index", 0)
+                title = meta.get("title") or meta.get("filename") or "Untitled"
+                if len(title) > 60:
+                    title = title[:57] + "..."
 
-            url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else f"file://{urllib.parse.quote(file_path)}#page={chunk_index + 1}"
-            sources.append(f"[{i + 1}] [{title}]({url}) — {preview}")
+                preview = " ".join(doc_text.strip().split())[:120] + "..."
+                file_path = meta.get("file_path")
+                arxiv_id = meta.get("arxiv_id")
+                chunk_index = meta.get("chunk_index", 0)
+
+                url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else f"file://{urllib.parse.quote(file_path)}#page={chunk_index + 1}"
+
+                sources.append(f"[{len(used_docs)}] [{title}]({url}) — {preview}")
+
 
     sources_text = "\n\n**Sources:**\n" + "\n".join(sources) if sources else "\n\n**Sources:**\n- No available sources."
     chat_history = "\n".join([f"User: {q}\nAI: {a}" for q, a in history])
