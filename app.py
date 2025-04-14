@@ -255,7 +255,6 @@ def query_rag(
                 else:
                     # Trigger web search (because local insufficient and agent enabled)
                     web_search_attempted = True
-                    # (Web search logic moved below to avoid duplication)
 
             else:
                 # --- No Local Context Found ---
@@ -264,7 +263,6 @@ def query_rag(
                     # Try web search directly
                     glog.info("Web agent enabled, attempting web search directly.")
                     web_search_attempted = True
-                    # (Web search logic below will handle this)
                 else:
                     # No local, web agent disabled -> Report no context
                     glog.info("Web agent disabled, no context available.")
@@ -301,14 +299,24 @@ def query_rag(
         final_source_links = ["[Info] RAG Disabled."]
 
 
-    # --- Final Source Text Construction ---
+    # --- Final Source Text Construction (Corrected Logic) ---
     if final_source_links:
-         if final_source_links[0].startswith("["):
-              sources_text = f"\n\n**Sources:**\n- {final_source_links[0]}"
+         first_link_is_likely_info = (
+             len(final_source_links) == 1 and 
+             final_source_links[0].startswith("[") and
+             final_source_links[0].endswith("]") and
+             "](" not in final_source_links[0] 
+         )
+
+         if first_link_is_likely_info:
+              sources_text = f"\n\n**Sources:**\n- {final_source_links[0][1:-1]}"
+              glog.debug("Displaying sources as single info message.")
          else:
               sources_text = "\n\n**Sources:**\n" + "\n".join(final_source_links)
+              glog.debug(f"Displaying sources as joined list of {len(final_source_links)} links.")
     else:
          sources_text = "\n\n**Sources:**\n- No relevant context found."
+         glog.debug("Displaying sources as 'No relevant context found'.")
     # --- End Source Text Construction ---
 
     # --- Prepare Prompt for LLM ---
