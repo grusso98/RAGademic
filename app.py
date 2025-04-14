@@ -13,7 +13,6 @@ import ollama
 import plotly.graph_objs as go
 import requests
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from markitdown import MarkItDown
 from openai import OpenAI
 from sklearn.manifold import TSNE
