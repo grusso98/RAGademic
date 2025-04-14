@@ -12,6 +12,7 @@ import ollama
 import plotly.graph_objs as go
 import requests
 from dotenv import load_dotenv
+from markitdown import MarkItDown
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from PyPDF2 import PdfReader
@@ -51,52 +52,48 @@ _KB_FOLDER: str = "knowledge_base/"
 DEFAULT_SUMMARY_MODEL = "llama3.2:latest" 
 memory_manager = MemoryManager(model_identifier=DEFAULT_SUMMARY_MODEL)
 
-def load_notes() -> None:
+def load_notes() -> str:
     """
     Loads notes from the knowledge base folder and adds them to the vector DB.
-
-    This function iterates through all categories and files in the knowledge
-    base folder, extracts the text from PDF documents, chunks the content,
-    and adds it to the vector database.
+    Processes various document formats using MarkItDown.
 
     Returns:
-        None
+        str: Status message indicating the number of processed files.
     """
+    _KB_FOLDER = "./knowledge_base"
     loaded_count = 0
+    md_converter = MarkItDown()
+
     for category in os.listdir(_KB_FOLDER):
         category_path = os.path.join(_KB_FOLDER, category)
         if os.path.isdir(category_path):
-            for file_path in glob.glob(f"{category_path}/*.pdf"):
+            for file_path in glob.glob(f"{category_path}/*"):
                 glog.info(f"Processing file: {file_path}")
                 try:
-                    with open(file_path, "rb") as f:
-                        reader = PdfReader(f)
-                        content = "\n".join([
-                            page.extract_text() for page in reader.pages
-                            if page.extract_text()
-                        ])
+                    result = md_converter.convert(file_path)
+                    content = result.text_content
 
-                        if not content.strip():
-                            glog.warning(f"No text extracted from {file_path}, skipping.")
-                            continue
+                    if not content.strip():
+                        glog.warning(f"No text extracted from {file_path}, skipping.")
+                        continue
 
-                        chunks = semantic_chunk_text(content, chunk_size=2000, overlap=400)
-                        doc_id_base = os.path.basename(file_path)
+                    chunks = semantic_chunk_text(content, chunk_size=2000, overlap=400)
+                    doc_id_base = os.path.basename(file_path)
 
-                        for i, chunk in enumerate(chunks):
-                            chunk_id = f"{doc_id_base}_part{i}"
-                            add_document(
-                                chunk_id, chunk, {
-                                    "category": category,
-                                    "file_path": os.path.abspath(file_path),
-                                    "chunk_index": i,
-                                    "filename": doc_id_base # Add filename for display
-                                })
-                        loaded_count += 1
-                        glog.info(f"Added {len(chunks)} chunks for {doc_id_base}")
+                    for i, chunk in enumerate(chunks):
+                        chunk_id = f"{doc_id_base}_part{i}"
+                        add_document(
+                            chunk_id, chunk, {
+                                "category": category,
+                                "file_path": os.path.abspath(file_path),
+                                "chunk_index": i,
+                                "filename": doc_id_base
+                            })
+                    loaded_count += 1
+                    glog.info(f"Added {len(chunks)} chunks for {doc_id_base}")
                 except Exception as e:
                     glog.error(f"Failed to process {file_path}: {e}")
-    return f"Finished loading notes. Processed {loaded_count} files." # Return status
+    return f"Finished loading notes. Processed {loaded_count} files."
 
 def semantic_chunk_text(text: str, chunk_size: int = 2000, overlap: int = 400) -> List[str]:
     """
@@ -478,31 +475,25 @@ def visualize_embeddings_interactive() -> go.Figure | str:
 
 def add_document_interface(file: gr.File) -> str:
     """
-    Allows the user to add a document by uploading a PDF file. Chunks the document.
+    Allows the user to add a document by uploading a file. Processes various formats using MarkItDown.
 
     Args:
-        file (gr.File): The file object representing the uploaded PDF. Can be None.
+        file (gr.File): The file object representing the uploaded document.
 
     Returns:
         str: A message indicating the success or failure of the document upload and chunking.
     """
     if file is None:
-        return "No file uploaded. Please select a PDF file."
-        
-    file_path = file.name 
-    file_name = os.path.basename(file_path)
-    
-    if not file_name.lower().endswith(".pdf"):
-         return f"Error: Invalid file type '{os.path.splitext(file_name)[1]}'. Please upload a PDF file."
+        return "No file uploaded. Please select a document."
 
+    file_path = file.name
+    file_name = os.path.basename(file_path)
     glog.info(f"Adding document from uploaded file: {file_name}")
-    
+
     try:
-        with open(file_path, "rb") as f:
-            reader = PdfReader(f)
-            content = "\n".join(
-                [page.extract_text() for page in reader.pages if page.extract_text()]
-            )
+        md_converter = MarkItDown()
+        result = md_converter.convert(file_path)
+        content = result.text_content
 
         if not content.strip():
             return f"Warning: No text could be extracted from {file_name}."
@@ -516,24 +507,23 @@ def add_document_interface(file: gr.File) -> str:
             if not chunk.strip():
                 skipped_count += 1
                 continue
-                
+
             chunk_id = f"{file_name}_part{i}"
-            abs_path = os.path.abspath(file_path) 
+            abs_path = os.path.abspath(file_path)
             status = add_document(chunk_id, chunk, {
-                "file_path": abs_path, 
-                "filename": file_name, 
+                "file_path": abs_path,
+                "filename": file_name,
                 "chunk_index": i,
-                "category": "uploaded" 
+                "category": "uploaded"
             })
             if "added successfully" in status:
-                 added_count += 1
-            glog.debug(status) 
-
+                added_count += 1
+            glog.debug(status)
 
         result_message = f"Document '{file_name}' processed. Added {added_count} new chunks."
         if skipped_count > 0:
-             result_message += f" Skipped {skipped_count} empty chunks."
-        
+            result_message += f" Skipped {skipped_count} empty chunks."
+
         return result_message
 
     except Exception as e:
