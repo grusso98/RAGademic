@@ -5,7 +5,6 @@ import urllib
 import xml.etree.ElementTree as ET
 from typing import List
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 import glog
 import gradio as gr
 import numpy as np
@@ -13,14 +12,13 @@ import ollama
 import plotly.graph_objs as go
 import requests
 from dotenv import load_dotenv
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from PyPDF2 import PdfReader
 from sklearn.manifold import TSNE
 
-from memory_manager import MemoryManager 
-
-from vector_db import (add_document, list_documents,
-                       query_documents, collection)
+from memory_manager import MemoryManager
+from vector_db import add_document, collection, list_documents, query_documents
 
 load_dotenv(override=True)
 

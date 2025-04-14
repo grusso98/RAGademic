@@ -1,7 +1,8 @@
 import json
 import os
+
 import glog
-import ollama 
+import ollama
 
 _MEMORY_FILE = "conversation_memory.json"
 _SUMMARY_PROMPT = """
