@@ -1,9 +1,10 @@
 import glob
 import os
 import random
+import re
 import urllib
 import xml.etree.ElementTree as ET
-from typing import List
+from typing import Dict, List
 
 import glog
 import gradio as gr
@@ -12,13 +13,14 @@ import ollama
 import plotly.graph_objs as go
 import requests
 from dotenv import load_dotenv
-from markitdown import MarkItDown
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from markitdown import MarkItDown
 from openai import OpenAI
-from PyPDF2 import PdfReader
 from sklearn.manifold import TSNE
 
+from agent import is_context_sufficient, search_scrape_and_ingest
 from memory_manager import MemoryManager
+from utils import semantic_chunk_text
 from vector_db import add_document, collection, list_documents, query_documents
 
 load_dotenv(override=True)
@@ -36,7 +38,7 @@ Use the following information to answer the question:
 Long-term Memory Summary:
 {memory_summary}
 
-Context from Documents (if available):
+Context from Documents and Web Search (if applicable):
 {context}
 
 Current Conversation History (most recent turns):
@@ -46,6 +48,7 @@ Question: {query}
 
 Answer:
 """
+
 _MODEL_SIZE: str = os.getenv("MODEL_SIZE", "4b")
 _KB_FOLDER: str = "knowledge_base/"
 
@@ -94,26 +97,6 @@ def load_notes() -> str:
                 except Exception as e:
                     glog.error(f"Failed to process {file_path}: {e}")
     return f"Finished loading notes. Processed {loaded_count} files."
-
-def semantic_chunk_text(text: str, chunk_size: int = 2000, overlap: int = 400) -> List[str]:
-    """
-    Splits a given text into semantic chunks using a recursive character text splitter.
-
-    Args:
-        text (str): The input text to be split into chunks.
-        chunk_size (int, optional): The size of each chunk. Defaults to 1000.
-        overlap (int, optional): The amount of overlap between consecutive chunks. Defaults to 200.
-
-    Returns:
-        List[str]: A list of text chunks.
-    """
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=overlap,
-        separators=["\n\n", "\n", " ", ""],
-        length_function=len # Ensure length_function is specified
-    )
-    return splitter.split_text(text)
 
 
 def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
@@ -199,7 +182,14 @@ def search_and_ingest_papers(query: str, max_results: int = 5) -> str:
         
     return result_message
 
-def query_rag(query: str, model: str, history: List[List[str]], use_rag: bool, memory_summary: str):
+def query_rag(
+    query: str,
+    model: str,
+    history: List[List[str]],
+    enable_local_rag: bool, 
+    enable_web_agent: bool, 
+    memory_summary: str
+    ):
     """
     Queries the RAG system, incorporating long-term memory summary.
 
@@ -207,119 +197,156 @@ def query_rag(query: str, model: str, history: List[List[str]], use_rag: bool, m
         query (str): The user's query.
         model (str): The model identifier (e.g., 'llama3.2:latest', 'gpt-4o-mini').
         history (List[List[str]]): The *current session's* chat history.
-        use_rag (bool): Whether to use RAG context.
+        enable_local_rag (bool): Whether to use RAG context.
+        enable_web_agent (bool): Whether to activate the web search agent.
         memory_summary (str): The summary of past conversations.
 
     Yields:
         str: Chunks of the generated response.
     """
-    context = ""
-    sources = []
-    if use_rag:
-        glog.info(f"RAG enabled. Querying vector DB for: '{query}'")
+    context_for_llm = ""
+    final_source_links = []
+    web_search_attempted = False 
+
+    if enable_local_rag:
+        glog.info(f"Local RAG enabled. Querying vector DB for: '{query}'")
+        local_context = ""
+        local_sources_metadata = []
         try:
+            # --- 1. Attempt Local Retrieval ---
             results = query_documents(query, n_results=5) 
             if results and results.get("documents"):
                 context_docs = []
-                for doc_list in results.get("documents", []):
-                     if isinstance(doc_list, list): 
-                         context_docs.extend(doc_list)
-                     elif isinstance(doc_list, str):
-                         context_docs.append(doc_list)
+                doc_lists = results.get("documents", [])
+                if doc_lists and isinstance(doc_lists[0], list): context_docs.extend(doc for sublist in doc_lists for doc in sublist)
+                else: context_docs = doc_lists
+                local_context = "\n\n".join(filter(None, context_docs))
 
-                context = "\n\n".join(context_docs)
-                glog.info(f"Retrieved {len(context_docs)} context snippets.")
+                meta_lists = results.get("metadatas", [])
+                if meta_lists:
+                    if isinstance(meta_lists[0], list): local_sources_metadata.extend(meta for sublist in meta_lists for meta in sublist if meta)
+                    else: local_sources_metadata.extend(meta for meta in meta_lists if meta)
+                glog.info(f"Retrieved {len(context_docs)} context snippets from local DB.")
+            else:
+                glog.info("No relevant documents found initially in vector DB.")
+                local_context = "" 
 
-                used_docs_info = {} 
+            # --- 2. Decide Action Based on Local Context and Toggles ---
+            if local_context:
+                # --- Local Context Found ---
+                use_local_context = True # Assume we use local initially
+                if enable_web_agent:
+                    # Web agent is enabled, check sufficiency
+                    glog.info("Web agent enabled, checking local context sufficiency...")
+                    context_sufficient = is_context_sufficient(query, local_context)
+                    glog.info(f"Local context sufficient check result: {context_sufficient}")
+                    if not context_sufficient:
+                        # Insufficient and web agent is ON -> Try web search
+                        use_local_context = False # Signal to use web search instead
+                        glog.info("Local context insufficient, will attempt web search.")
+                    else:
+                        glog.info("Local context sufficient, proceeding with local.")
+                else:
+                    # Web agent disabled, must use local context if found
+                    glog.info("Web agent disabled, using local context.")
 
-                # Iterate through metadata which should align with documents
-                for meta_list in results.get("metadatas", []):
-                     if not meta_list: continue
-                     for meta in meta_list:
-                        if not meta: continue 
-
-                        # Determine a unique identifier for the source document/chunk
-                        file_path = meta.get("file_path")
-                        arxiv_id = meta.get("arxiv_id")
-                        chunk_index = meta.get("chunk_index", 0)
-                        
-                        # Prefer file_path or arxiv_id as base identifier
-                        doc_base_id = file_path if file_path else (f"arxiv_{arxiv_id}" if arxiv_id else None)
-                        if not doc_base_id: continue # Cannot identify source
-
-                        # Create a more unique key including chunk index if needed, or just use base ID
-                        source_key = f"{doc_base_id}_chunk{chunk_index}" # Unique key per chunk
-
-                        if source_key not in used_docs_info:
-                            title = meta.get("title") or meta.get("filename") or doc_base_id.split('/')[-1] or "Unknown Source"
-                            if len(title) > 60:
-                                title = title[:57] + "..."
-
-                            preview = context[:120].strip().replace('\n', ' ') + "..." # Generic preview for now
-
-
-                            url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else (f"file://{urllib.parse.quote(file_path)}" if file_path else "#")
-                            
-                            # Adjust URL for page number if chunk index is meaningful (e.g., for PDFs)
-                            if file_path and isinstance(chunk_index, int) and chunk_index > 0:
-                                # Rough estimation, assumes chunks correspond somewhat to pages
-                                url += f"#page={chunk_index + 1}" 
-                                
-                            used_docs_info[source_key] = {
-                                "title": title,
-                                "url": url,
-                                "preview": preview 
-                            }
-                
-                source_links = []
-                for i, info in enumerate(used_docs_info.values()):
-                     source_links.append(f"[{i+1}] [{info['title']}]({info['url']})") # Removed preview for cleaner look
-                
-                sources_text = "\n\n**Sources:**\n" + "\n".join(source_links) if source_links else "\n\n**Sources:**\n- Context retrieved but source mapping failed."
-
+                if use_local_context:
+                    context_for_llm = local_context
+                    final_source_links = generate_source_links(local_sources_metadata, "local")
+                else:
+                    # Trigger web search (because local insufficient and agent enabled)
+                    web_search_attempted = True
+                    # (Web search logic moved below to avoid duplication)
 
             else:
-                glog.info("No relevant documents found in vector DB.")
-                context = "No relevant documents found."
-                sources_text = "\n\n**Sources:**\n- No relevant documents found."
-        except Exception as e:
-            glog.error(f"Error querying vector DB: {e}")
-            context = "Error retrieving context from documents."
-            sources_text = "\n\n**Sources:**\n- Error retrieving sources."
-    else:
-        glog.info("RAG is disabled.")
-        context = "RAG Disabled" # Indicate RAG was off
-        sources_text = "\n\n**Sources:**\n- RAG Disabled."
+                # --- No Local Context Found ---
+                glog.info("No local context found.")
+                if enable_web_agent:
+                    # Try web search directly
+                    glog.info("Web agent enabled, attempting web search directly.")
+                    web_search_attempted = True
+                    # (Web search logic below will handle this)
+                else:
+                    # No local, web agent disabled -> Report no context
+                    glog.info("Web agent disabled, no context available.")
+                    context_for_llm = "No relevant context found in local knowledge base."
+                    final_source_links = ["[Info] No local context found."]
 
-    history_limit = 5 # Show last N turns in prompt
+            # --- 3. Perform Web Search (if flagged) ---
+            if web_search_attempted:
+                glog.info("Attempting agentic web search...")
+                web_context_text, web_sources_metadata = search_scrape_and_ingest(query)
+                if web_context_text:
+                    glog.info(f"Using context from web search ({len(web_context_text)} chars).")
+                    # Use web context (replace any previous local context assignment)
+                    context_for_llm = f"--- Context from Web Search ---\n{web_context_text}"
+                    final_source_links = generate_source_links(web_sources_metadata, "web")
+                else:
+                    glog.warning("Web search did not yield usable context.")
+                    # Determine fallback message based on whether local was tried
+                    if local_context: # We tried local first, then web failed
+                         context_for_llm = "Relevant context not found locally. Web search failed."
+                         final_source_links = ["[Info] Local context insufficient, web search failed."]
+                    else: # No local, web failed too
+                         context_for_llm = "No relevant context found locally or from web search."
+                         final_source_links = ["[Web Search Failed] No context found."]
+
+        except Exception as e:
+            glog.error(f"Error during RAG retrieval or agentic step: {e}", exc_info=True)
+            context_for_llm = "Error processing context retrieval."
+            final_source_links = ["[Error] Error retrieving sources."]
+
+    else: # Local RAG Disabled
+        glog.info("Local RAG is disabled by user.")
+        context_for_llm = "RAG Disabled"
+        final_source_links = ["[Info] RAG Disabled."]
+
+
+    # --- Final Source Text Construction ---
+    if final_source_links:
+         if final_source_links[0].startswith("["):
+              sources_text = f"\n\n**Sources:**\n- {final_source_links[0]}"
+         else:
+              sources_text = "\n\n**Sources:**\n" + "\n".join(final_source_links)
+    else:
+         sources_text = "\n\n**Sources:**\n- No relevant context found."
+    # --- End Source Text Construction ---
+
+    # --- Prepare Prompt for LLM ---
+    history_limit = 5
     recent_history = history[-history_limit:]
     chat_history_text = "\n".join([f"User: {q}\nAI: {a}" for q, a in recent_history]) if recent_history else "No current session history."
 
     prompt = _BASE_PROMPT.format(
         memory_summary=memory_summary if memory_summary else "No long-term memory summary available.",
-        context=context,
+        context=context_for_llm,
         chat_history=chat_history_text,
         query=query
     )
-    
+    glog.debug(f"Final prompt context length: {len(context_for_llm)}")
 
+    # --- LLM Call ---
     try:
-        if model in ["llama3.2", "gemma3"]:
+        provider = "ollama" 
+        if "gpt" in model:
+            provider = "openai"
+        elif model not in ["llama3.2", "gemma3"]: 
+             glog.warning(f"Model '{model}' not explicitly listed as Ollama/OpenAI, assuming Ollama.")
+             provider = "ollama"
+
+        if provider == "ollama":
             llm_model_id = model
             if model == "gemma3":
                 llm_model_id = f"{model}:{_MODEL_SIZE}" 
-            elif model == "llama3.2":
-                 # Assuming a default tag like 'latest' if not specified
-                 # Check if ollama needs explicit tag, e.g., 'llama3.2:latest'
-                 if ':' not in llm_model_id:
-                      llm_model_id += ":latest" # Adjust if needed
+            if ':' not in llm_model_id:
+                llm_model_id += ":latest"
 
             glog.info(f"Streaming response from Ollama model: {llm_model_id}")
             response = ollama.chat(
                 model=llm_model_id,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt} 
+                    {"role": "system", "content": _SYSTEM_PROMPT}, 
+                    {"role": "user", "content": prompt}
                 ],
                 stream=True
             )
@@ -328,39 +355,127 @@ def query_rag(query: str, model: str, history: List[List[str]], use_rag: bool, m
                 if "message" in chunk and "content" in chunk["message"]:
                     content_piece = chunk["message"]["content"]
                     full_response_content += content_piece
-                    yield content_piece 
-            yield sources_text 
+                    yield content_piece     
 
-        elif "gpt" in model: 
+        elif provider == "openai":
             glog.info(f"Streaming response from OpenAI model: {model}")
-            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            if os.getenv("OPENAI_API_BASE"):
-                openai_client.api_base = os.getenv("OPENAI_API_BASE")
             
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+            if not openai_api_key:
+                glog.error("OPENAI_API_KEY environment variable not set.")
+                yield "Error: OpenAI API key not configured."
+                yield sources_text 
+                return
+
+            openai_client = OpenAI(api_key=openai_api_key)
+            
+            openai_base_url = os.getenv("OPENAI_API_BASE")
+            if openai_base_url:
+                openai_client.base_url = openai_base_url
+
             stream = openai_client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt} 
+                    {"role": "user", "content": prompt}
                 ],
                 stream=True
             )
             full_response_content = ""
             for chunk in stream:
-                if chunk.choices[0].delta.content:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                     content_piece = chunk.choices[0].delta.content
                     full_response_content += content_piece
                     yield content_piece 
-            yield sources_text 
+            
         else:
-             glog.error(f"Model '{model}' not supported.")
-             yield f"Error: Model '{model}' is not configured or supported."
-             yield sources_text 
+             glog.error(f"Model provider determination failed for '{model}'.")
+             yield f"Error: Cannot determine how to handle model '{model}'."
+             yield sources_text
+             return 
+
+        yield sources_text
 
     except Exception as e:
-        glog.error(f"Error during LLM call with model {model}: {e}")
-        yield f"An error occurred while generating the response: {e}"
+        glog.exception(f"Error during LLM call with model {model}:") 
+        yield f"\n\nAn error occurred while generating the response: {e}" 
         yield sources_text 
+
+def generate_source_links(metadata_list: List[Dict], source_type: str = "local") -> List[str]:
+    """Generates formatted markdown links for citations from metadata.
+    Args:
+        metadata_list: A list of dictionaries containing metadata.
+        source_type: The type of source (default: "local").
+
+    Returns:
+        A list of strings, where each string is a source link.
+    """
+    if not metadata_list:
+        glog.warning("generate_source_links called with empty metadata_list.")
+        return []
+
+    source_links = []
+    used_docs_info = {} 
+
+    for idx, meta in enumerate(metadata_list):
+        if not isinstance(meta, dict):
+            glog.warning(f"Skipping item {idx} because it's not a dictionary: {type(meta)} - {meta}")
+            continue
+    
+        url = meta.get("url")
+        file_path = meta.get("file_path")
+        arxiv_id = meta.get("arxiv_id")
+
+        url = str(url).strip() if url is not None else None
+        file_path = str(file_path).strip() if file_path is not None else None
+        arxiv_id = str(arxiv_id).strip() if arxiv_id is not None else None
+
+        grouping_key = url if (url and url.startswith('http')) else file_path if file_path else (f"arxiv_{arxiv_id}" if arxiv_id else None)
+
+        if not grouping_key:
+            glog.warning(f"Could not determine valid grouping key for meta item {idx}: {meta}")
+            continue
+
+        if grouping_key not in used_docs_info:
+            raw_title = meta.get("title") or meta.get("filename") or grouping_key.split('/')[-1] or "Unknown Source"
+            title = str(raw_title)
+            title = re.sub(r'[\[\]\(\)\n\r]', '', title).strip() 
+            if len(title) > 70: title = title[:67].strip() + "..."
+            if not title: title = "Source" 
+            link_url = "#" 
+            if url and url.startswith('http'):
+                link_url = url.splitlines()[0].strip() 
+            elif arxiv_id:
+                 link_url = f"https://arxiv.org/abs/{arxiv_id}"
+            elif file_path:
+                 try:
+                     quoted_path = urllib.parse.quote(file_path)
+                     link_url = f"file://{quoted_path}"
+                 except Exception as e:
+                     glog.warning(f"Failed to quote file path '{file_path}': {e}")
+                     link_url = "#"
+
+            prefix = ""
+            meta_source = meta.get("source", "").lower()
+            if meta_source == "web" or (url and not file_path and not arxiv_id):
+                prefix = "(Web) "
+            elif meta_source == "local" or file_path:
+                prefix = "(Local) "
+            elif meta_source == "arxiv" or arxiv_id:
+                prefix = "(arXiv) "
+
+            display_title = f"{prefix}{title}"
+            used_docs_info[grouping_key] = {"title": display_title, "url": link_url}
+            glog.debug(f"Stored info for key '{grouping_key}': Title='{display_title}', URL='{link_url}'")
+
+    for i, info in enumerate(used_docs_info.values()):
+         final_title = info.get('title', 'Link')
+         final_url = info.get('url', '#')
+         link_string = f"[{i+1}] [{final_title}]({final_url})"
+         source_links.append(link_string)
+
+    glog.info(f"Generated {len(source_links)} source link strings.")
+    return source_links
 
 def visualize_embeddings_interactive() -> go.Figure | str: 
     """
@@ -591,42 +706,77 @@ with gr.Blocks(theme=gr.themes.Soft(font="ui-sans-serif")) as demo:
                          value="gpt-4o-mini", 
                          label="Choose LLM")
                          
-                     use_rag_toggle = gr.Checkbox(
-                         label="Enable RAG (Use My Notes)", 
-                         value=True)
+                     enable_local_rag_toggle = gr.Checkbox(
+                         label="Use Local Knowledge Base",
+                         value=True, 
+                         elem_id="local_rag_toggle") 
+
+                     enable_web_agent_toggle = gr.Checkbox(
+                         label="Enable Web Search Agent (if Local KB is insufficient)", 
+                         value=False, 
+                         elem_id="web_agent_toggle")
                          
                      submit_button = gr.Button("Send Message", variant="primary")
                      
                      clear_memory_button = gr.Button("Clear Chat Memory")
                      
-            def respond_stream(query: str, model: str, chat_hist: List[List[str]], use_rag: bool):
+            def respond_stream(
+                query: str,
+                model: str,
+                chat_hist: List[List[str]],
+                enable_local_rag: bool,
+                enable_web_agent: bool 
+                ):
                 """Handles the streaming response and updates history."""
                 if not query.strip():
-                    yield chat_hist 
+                    yield chat_hist
                     return
 
-                glog.info(f"User query: '{query}', Model: {model}, RAG: {use_rag}")
-                
-                summary = memory_manager.get_summary() 
-                
-                chat_hist.append([query, None]) 
-                yield chat_hist
+                glog.info(f"User query: '{query}', Model: {model}, Local RAG: {enable_local_rag}, Web Agent: {enable_web_agent}")
 
-                response_generator = query_rag(query, model, chat_hist[:-1], use_rag, summary) 
+                summary = memory_manager.get_summary()
+
+                chat_hist.append([query, None])
+                yield chat_hist 
+
+                response_generator = query_rag(
+                    query,
+                    model,
+                    chat_hist[:-1], 
+                    enable_local_rag, 
+                    enable_web_agent, 
+                    summary
+                )
 
                 full_response = ""
+                ai_message_started = False
+                sources_part = ""
                 for chunk in response_generator:
-                    if chunk: 
-                        if full_response == "" and chunk.startswith(" "): 
+                    if chunk:
+                        if chunk.startswith("\n\n**Sources:**"):
+                             sources_part = chunk
+                             continue
+
+                        if not ai_message_started and chunk.startswith(" "):
                            chunk = chunk.lstrip()
+
                         full_response += chunk
-                        chat_hist[-1][1] = full_response 
+                        chat_hist[-1][1] = full_response
+                        ai_message_started = True
                         yield chat_hist
-                
+
+                if sources_part:
+                    if chat_hist[-1][1]:
+                        chat_hist[-1][1] += sources_part
+                    else:
+                        chat_hist[-1][1] = sources_part
+                    yield chat_hist
+
                 glog.info(f"AI full response length: {len(full_response)}")
-                
-                if full_response and not full_response.startswith("An error occurred"):
-                    memory_manager.add_interaction(query, full_response)
+
+                final_ai_content = chat_hist[-1][1] if chat_hist[-1][1] else ""
+                if final_ai_content and not final_ai_content.startswith("An error occurred"):
+                    memory_manager.add_interaction(query, final_ai_content)
                     glog.info("Interaction added to long-term memory.")
                 else:
                      glog.warning("Interaction not saved to memory due to empty or error response.")
@@ -635,28 +785,27 @@ with gr.Blocks(theme=gr.themes.Soft(font="ui-sans-serif")) as demo:
             def clear_memory_ui():
                 """Clears memory and updates the chatbot UI."""
                 memory_manager.clear_memory()
-                glog.info("Chatbot UI cleared.")
-                return [], "Chat memory cleared successfully." 
+                glog.info("Chatbot UI and memory cleared.")
+                return [], "Chat memory cleared successfully."
 
             submit_button.click(
                 respond_stream,
-                inputs=[user_input, model_selector, chatbot_interface, use_rag_toggle],
+                inputs=[user_input, model_selector, chatbot_interface, enable_local_rag_toggle, enable_web_agent_toggle],
                 outputs=[chatbot_interface]
-            ).then(lambda: "", outputs=[user_input]) 
+            ).then(lambda: "", outputs=[user_input])
 
-            user_input.submit( 
+            user_input.submit(
                  respond_stream,
-                inputs=[user_input, model_selector, chatbot_interface, use_rag_toggle],
+                inputs=[user_input, model_selector, chatbot_interface, enable_local_rag_toggle, enable_web_agent_toggle],
                 outputs=[chatbot_interface]
-            ).then(lambda: "", outputs=[user_input]) 
+            ).then(lambda: "", outputs=[user_input])
 
-            clear_memory_status = gr.Textbox(label="Memory Status", interactive=False, visible=False) # Hidden status box
+            clear_memory_status = gr.Textbox(label="Memory Status", interactive=False, visible=False) 
             clear_memory_button.click(
                 clear_memory_ui, 
                 inputs=[], 
-                outputs=[chatbot_interface, clear_memory_status] # Clear chat UI and show status
-            ).then(lambda: gr.update(visible=True), outputs=[clear_memory_status]) # Make status visible after click
-
+                outputs=[chatbot_interface, clear_memory_status] 
+            ).then(lambda: gr.update(visible=True), outputs=[clear_memory_status]) 
 
         with gr.TabItem("Knowledge Base Management"):
             gr.Markdown("Manage your documents and knowledge sources.")
@@ -701,7 +850,11 @@ with gr.Blocks(theme=gr.themes.Soft(font="ui-sans-serif")) as demo:
             vis_button.click(fn=generate_and_display_plot, outputs=[vis_plot, vis_status])
 
 if __name__ == "__main__":
-    glog.setLevel("INFO") 
+    glog.setLevel("INFO")
     glog.info("Starting RAGademic Application...")
+    vector_db_path = "./chroma_db" 
+    if not os.path.exists(vector_db_path):
+         os.makedirs(vector_db_path)
+         glog.info(f"Created ChromaDB directory: {vector_db_path}")
     demo.launch()
     glog.info("RAGademic Application stopped.")
