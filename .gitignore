@@ -1,8 +1,19 @@
+#virtualenv folder
 /ragademic
+
+#env file
 .env
+
+#cache
+/tests/__pycache__
 /__pycache__
+
+#chromadb
 /chroma_db
 /knowledge_base/*
+
+#roadmap
 todo
+
 #exlude memory files
 *.json 
