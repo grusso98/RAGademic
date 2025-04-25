@@ -1,13 +1,17 @@
-import pytest
-from unittest.mock import MagicMock, patch
 import os
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 
 # Mocking environment variables before importing vector_db
 @pytest.fixture(autouse=True)
 def mock_env_vars(mocker):
     mocker.patch.dict(os.environ, {'EMBEDDER_TYPE': 'local', 'OPENAI_API_KEY': 'fake_openai_key', 'HF_TOKEN': 'fake_hf_token'})
 
-from vector_db import add_document, query_documents, delete_document, list_documents
+from vector_db import (add_document, delete_document, list_documents,
+                       query_documents)
+
 
 # Mock the ChromaDB PersistentClient and collection for all tests in this file
 @pytest.fixture(autouse=True)

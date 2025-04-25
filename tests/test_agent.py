@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agent import is_context_sufficient, perform_web_search, scrape_web_content
+
 
 # Fixture to mock ollama for is_context_sufficient tests
 @pytest.fixture
