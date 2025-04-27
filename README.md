@@ -16,7 +16,7 @@ This project provides a **Retrieval-Augmented Generation (RAG)** system to query
 ## Installation
 
 ### Prerequisites
-- Ensure you have Python **3.8+** installed.
+- Ensure you have Python **3.10+** installed.
 - Install [Ollama](https://ollama.com/) to run local models.
 ### 1. Clone the Repository
 ```bash
