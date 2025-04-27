@@ -1,34 +1,77 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 from utils import semantic_chunk_text
 
 
-def test_semantic_chunk_text_basic():
-    """Tests basic text splitting with default parameters."""
-    text = "This is the first sentence. This is the second sentence. This is the third sentence, which is a bit longer."
-    chunks = semantic_chunk_text(text, chunk_size=50, overlap=10)
-    
-    assert isinstance(chunks, list)
-    assert len(chunks) > 0
-    # Check if chunks are within the expected size (considering overlap)
-    for chunk in chunks:
-        assert len(chunk) <= 50 + 10 # Allow for overlap content
+@pytest.fixture
+def mock_huggingface_embeddings_class(mocker):
+    # Patch the HuggingFaceEmbeddings class imported in utils.py
+    mock_embeddings_class = mocker.patch('utils.HuggingFaceEmbeddings')
+    # Return the mock class so tests can check its instantiation if needed
+    return mock_embeddings_class
 
-def test_semantic_chunk_text_empty_string():
+@pytest.fixture
+def mock_chunker_and_embeddings_instance(mocker):
+    # Create a mock instance for the embeddings model
+    mock_embeddings_instance = MagicMock()
+    # Patch the 'embeddings' instance at the module level in utils.py
+    # This ensures that when semantic_chunk_text uses 'embeddings', it gets this mock
+    mocker.patch('utils.embeddings', mock_embeddings_instance)
+
+    # Patch the SemanticChunker class imported in utils.py
+    mock_chunker_class = mocker.patch('utils.SemanticChunker')
+    # Create a mock instance that will be returned when the SemanticChunker class is called (instantiated)
+    mock_chunker_instance = MagicMock()
+    # Configure the mock class to return the mock instance when called
+    mock_chunker_class.return_value = mock_chunker_instance
+
+    # Return the mock chunker instance, the mocked embeddings instance, AND the mock chunker class
+    return mock_chunker_instance, mock_embeddings_instance, mock_chunker_class
+
+def test_semantic_chunk_text_empty_string(mock_chunker_and_embeddings_instance):
     """Tests splitting an empty string."""
+    # Ensure the SemanticChunker is not called for empty input
+    mock_chunker_instance, _, mock_chunker_class = mock_chunker_and_embeddings_instance
+
     text = ""
     chunks = semantic_chunk_text(text)
+
     assert chunks == []
+    mock_chunker_class.assert_not_called() # SemanticChunker class should not be instantiated
+    mock_chunker_instance.split_text.assert_not_called() # split_text method should not be called
 
-def test_semantic_chunk_text_smaller_than_chunk_size():
-    """Tests splitting text smaller than the chunk size."""
-    text = "This is a short text."
-    chunks = semantic_chunk_text(text, chunk_size=100, overlap=20)
-    assert chunks == ["This is a short text."]
 
-def test_semantic_chunk_text_with_different_separators():
-    """Tests splitting text with different separators."""
-    text = "Line1\n\nLine2.\nLine3. Another sentence."
-    chunks = semantic_chunk_text(text, chunk_size=20, overlap=5)
-    assert isinstance(chunks, list)
-    assert len(chunks) > 1 # Expecting multiple chunks
+def test_semantic_chunk_text_calls_semantic_chunker(
+    mock_chunker_and_embeddings_instance # Use the fixture providing the mocks
+):
+    """
+    Tests that SemanticChunker is initialized correctly with the module-level embeddings instance
+    and its split_text method is called.
+    """
+    mock_chunker_instance, mock_embeddings_instance, mock_chunker_class = mock_chunker_and_embeddings_instance
+
+    # Simulate the return value of SemanticChunker's split_text
+    mock_split_text_result = ["chunk1", "chunk2", "chunk3"]
+    mock_chunker_instance.split_text.return_value = mock_split_text_result
+
+    text = "This is a sentence. This is another sentence. And a third one."
+    # Pass chunk_size and overlap, though SemanticChunker ignores them
+    chunk_size = 100
+    overlap = 20
+
+    chunks = semantic_chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+
+    # Assert that the mocked SemanticChunker CLASS was called (instantiated)
+    mock_chunker_class.assert_called_once_with(
+        embeddings=mock_embeddings_instance, # Assert it was called with the mocked instance
+        breakpoint_threshold_type='percentile',
+        breakpoint_threshold_amount=95,
+    )
+
+    # Assert that the split_text method of the mocked SemanticChunker INSTANCE was called
+    mock_chunker_instance.split_text.assert_called_once_with(text)
+
+    # Assert that the function returned the result from the mocked split_text call
+    assert chunks == mock_split_text_result
